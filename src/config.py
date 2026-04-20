@@ -4,6 +4,26 @@
 """Module documentation."""
 import os
 import json
+import builtins
+import re
+
+_ORIGINAL_PRINT = builtins.print
+_SUPPRESSED_PLACEHOLDER_MESSAGES = {"[INFO] Status message emitted."}
+_SEPARATOR_LINE_PATTERN = re.compile(r"^[=\-]{8,}$")
+
+
+def _filtered_print(*args, **kwargs):
+    if len(args) == 1 and isinstance(args[0], str):
+        text = args[0].strip()
+        if text in _SUPPRESSED_PLACEHOLDER_MESSAGES:
+            return
+        if _SEPARATOR_LINE_PATTERN.fullmatch(text):
+            return
+    return _ORIGINAL_PRINT(*args, **kwargs)
+
+
+if os.environ.get("HKBFETD_ENABLE_PLACEHOLDER_LOGS", "0") != "1":
+    builtins.print = _filtered_print
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
@@ -125,8 +145,6 @@ HIGH_CONFIDENCE_SOURCES = [
     'Machine_Learning', 'Corrected_by_Rule'
 ]
 
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL_NAME = "llama3.2-vision"
 AI_PROMPT_PATH = os.path.join(CTL_DIR, "ai_calibration_prompt.txt")
 AI_DECISION_BATCH_SAVE = 10
 
@@ -165,6 +183,21 @@ LLM_VERIFICATION_OUTPUT = os.path.join(OUTPUT_DIR, "step4_llm_verified_classific
 LLM_MODEL_NAME = "qwen2.5:3b"
 LLM_CONFIDENCE_THRESHOLD = 0.7
 BATCH_SAVE_INTERVAL = 100
+
+# Cloud API settings (centralized)
+# Recommended: provide via environment variables instead of hard-coding secrets.
+# - HKBFETD_BASE_URL
+# - HKBFETD_API_KEY
+# - HKBFETD_CLOUD_MODEL_NAME
+BASE_URL = os.getenv("HKBFETD_BASE_URL", "https://api.yourcloudprovider.com/v1")
+API_KEY = os.getenv("HKBFETD_API_KEY", "")
+CLOUD_MODEL_NAME = os.getenv("HKBFETD_CLOUD_MODEL_NAME", "hunyuan-standard-256k")
+
+# Geometry arbitration (vision) API settings
+# - HKBFETD_VISION_API_KEY
+# - HKBFETD_VISION_CLOUD_MODEL_NAME
+VISION_API_KEY = os.getenv("HKBFETD_VISION_API_KEY", "")
+VISION_CLOUD_MODEL_NAME = os.getenv("HKBFETD_VISION_CLOUD_MODEL_NAME", "hunyuan-turbos-vision")
 
 def load_llm_taxonomy(file_path=LLM_TAXONOMY_FILE):
     try:

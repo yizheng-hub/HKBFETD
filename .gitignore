@@ -6,9 +6,19 @@ __pycache__/
 .venv/
 
 log/
-logs/
-output/
 intermediate_files/
+
+# Keep output folder, but ignore everything inside by default.
+output/*
+
+# Publish-ready outputs (allowed to commit)
+!output/HK_UBEM_Buildings_Public_v1.csv
+!output/HK_UBEM_Buildings_Public_v1.geojson
+
+# Optional: include step9 calibrated outputs if needed for reproducibility
+!output/step9_ml_calibrated_classification.csv
+!output/step9_ml_calibrated_classification.geojson
+
 *.log
 *.tmp
 *.bak
@@ -17,4 +27,3 @@ intermediate_files/
 Thumbs.db
 
 contextily_cache/
-*.log

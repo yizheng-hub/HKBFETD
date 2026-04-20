@@ -1,0 +1,6 @@
+data/**/*.pbf filter=lfs diff=lfs merge=lfs -text
+data/**/*.parquet filter=lfs diff=lfs merge=lfs -text
+output/*.csv filter=lfs diff=lfs merge=lfs -text
+output/*.geojson filter=lfs diff=lfs merge=lfs -text
+data/**/*.json filter=lfs diff=lfs merge=lfs -text
+data/**/*.csv filter=lfs diff=lfs merge=lfs -text

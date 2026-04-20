@@ -1,0 +1,58 @@
+
+{
+    "__STRONG_KEYWORDS__": [
+        "医院", "醫院", "Hospital", "诊所", "診所", "Clinic", "警署", "警署", "Police Station",
+        "消防局", "消防局", "Fire Station", "街市", "街市", "Market", "公厕", "公廁", "Public Toilet",
+        "学校", "學校", "School", "大学", "大學", "University", "工厂", "工廠", "Factory",
+        "仓库", "倉庫", "Warehouse", "酒店", "酒店", "Hotel", "宾馆", "賓館", "Guest House",
+        "公屋", "公屋", "Public Housing", "居屋", "居屋", "Home Ownership Scheme (HOS)",
+        "教堂", "教堂", "Church", "庙宇", "廟宇", "Temple", "变电站", "變電站", "Substation",
+        "泵房", "泵房", "Pump House", "码头", "碼頭", "Pier", "车厂", "車廠", "Bus Depot",
+        "殡仪馆", "殯儀館", "Funeral Parlour", "法院", "法院", "Court House",
+        "绿置居", "綠置居", "Green Form Subsidised Home Ownership Scheme",
+        "丁屋", "丁屋", "Small House", "村屋", "村屋", "Village House",
+        "唐楼", "唐樓", "Tong Lau", "独立屋", "獨立屋", "Detached House",
+        "小型屋宇", "小型屋宇", "Small House", "数据中心", "數據中心", "Data Centre",
+        "伺服器房", "伺服器房", "Server Room", "IDC", "IDC", "Internet Data Centre",
+        "食品厂", "食品廠", "Food Factory", "饮品厂", "飲品廠", "Beverage Factory",
+        "金属厂", "金屬廠", "Metal Factory", "机械厂", "機械廠", "Machinery Factory",
+        "电子厂", "電子廠", "Electronics Factory", "排污口", "排污口", "Outfall",
+        "灯塔", "燈塔", "Lighthouse", "隧道", "隧道", "Tunnel", "行人天桥", "行人天橋", "Footbridge",
+        "临时建筑", "臨時建築", "Temporary Structure", "工地", "工地", "Construction Site",
+        "堆填区", "堆填區", "Landfill", "废物转运站", "廢物轉運站", "Refuse Transfer Station",
+        "水泵房", "水泵房", "Pump House", "滤水厂", "濾水廠", "Water Treatment Plant",
+        "水库", "水庫", "Reservoir", "巴士总站", "巴士總站", "Bus Terminus",
+        "停车场", "停車場", "Car Park", "多层停车场", "多層停車場", "Multi-storey Car Park",
+        "垃圾站", "垃圾站", "Refuse Collection Point", "熟食中心", "熟食中心", "Food Court",
+        "大会堂", "大會堂", "City Hall", "体育馆", "體育館", "Sports Centre",
+        "游泳池", "游泳池", "Swimming Pool"
+    ],
+    "住宅类别": [
+        "公共房屋（Public Housing）",
+        "房委会资助出售单位（HA Subsidized Sale Flats）",
+        "私人房屋（Private Housing）",
+        "其他房屋（Other Housing）"
+    ],
+    "商业类别": [
+        "食肆（Restaurant）",
+        "零售（Retail）",
+        "办公室（Office）",
+        "住宿（Accommodation）",
+        "医疗（Human Health）",
+        "教育（Education）",
+        "数据中心（Data Centre）",
+        "其他商业（Other Commercial）"
+    ],
+    "工业类别": [
+        "纺织及服装制品（Textile & Wearing Apparel）",
+        "非制造业（Non-manufacturing）",
+        "食品及饮品（Food & Beverage）",
+        "金属及机械（Metal & Machinery）",
+        "其他工业（Other Industrial）"
+    ],
+    "非评估类别": [
+        "绝对噪声相关",
+        "交通基础设施",
+        "临时/杂项设施"
+    ]
+}

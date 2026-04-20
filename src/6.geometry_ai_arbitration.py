@@ -25,9 +25,7 @@ import traceback
 import time
 import json
 import base64
-import requests
 import re
-import glob
 from PIL import Image
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,7 +39,8 @@ from config import (
     CANDIDATES_RULES_PATH, FINAL_SUGGESTIONS_PATH, IMAGE_OUTPUT_DIR,
     CONTEXTILY_CACHE_DIR, NEIGHBOR_SEARCH_BUFFER, RUN_CANDIDATE_GENERATION,
     SKIP_IMAGE_GENERATION_CHECK, SKIP_ALL_IMAGES_IF_EXIST, BATCH_IMAGE_CHECK_SIZE,
-    AI_DECISIONS_LOG_PATH, VISUALIZATION_DPI, LLM_VERIFICATION_OUTPUT
+    AI_DECISIONS_LOG_PATH, VISUALIZATION_DPI, LLM_VERIFICATION_OUTPUT,
+    BASE_URL, VISION_API_KEY, VISION_CLOUD_MODEL_NAME
 )
 
 ABSOLUTE_FINAL_CSV = STEP5_MERGED_OUTPUT_PATH
@@ -53,9 +52,6 @@ try:
 except ImportError:
     AI_PROMPT_PATH = "../ctl/ai_calibration_prompt.txt"
 
-API_KEY = "sk-zk23b4b8e962c041ca80018b8eb24815bc869b80a1bd6aab"
-BASE_URL = "https://api.zzz-api.top/v1"
-CLOUD_MODEL_NAME = "hunyuan-turbos-vision"
 MAX_THREADS = 5
 print_lock = Lock()
 
@@ -64,7 +60,7 @@ custom_client = httpx.Client(
     verify=False, 
     limits=httpx.Limits(max_connections=50, max_keepalive_connections=50)
 )
-client = OpenAI(api_key=API_KEY, base_url=BASE_URL, http_client=custom_client)
+client = OpenAI(api_key=VISION_API_KEY, base_url=BASE_URL, http_client=custom_client)
 
 warnings.filterwarnings('ignore')
 tqdm.pandas()
@@ -403,7 +399,7 @@ def process_single_ai_task(row, host_class_map, prompt_template):
     host_class_str = f"{host_info.get('Final_Main_Class', 'Unknown')} - {host_info.get('Final_Sub_Class', 'Unknown')}"
         
     filled_prompt = prompt_template.format(host_class=host_class_str)
-    decision, reasoning = test_api_model(CLOUD_MODEL_NAME, filled_prompt, b64_stitched)
+    decision, reasoning = test_api_model(VISION_CLOUD_MODEL_NAME, filled_prompt, b64_stitched)
     
     decision = decision.lower()
     if 'keep' in decision: decision = 'keep'
@@ -609,7 +605,7 @@ class Logger(object):
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(base_dir, "log")
+    log_dir = os.path.join(os.path.dirname(base_dir), "log")
     os.makedirs(log_dir, exist_ok=True)
     
     log_file_path = os.path.join(log_dir, "6.geometry_ai_arbitration.txt")

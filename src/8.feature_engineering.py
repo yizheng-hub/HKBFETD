@@ -490,7 +490,7 @@ class Logger(object):
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(base_dir, "log")
+    log_dir = os.path.join(os.path.dirname(base_dir), "log")
     os.makedirs(log_dir, exist_ok=True)
     
     script_name = os.path.basename(__file__).replace(".py", ".txt")

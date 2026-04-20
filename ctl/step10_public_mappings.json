@@ -1,0 +1,52 @@
+{
+  "SUB_TO_MAIN": {
+    "公共房屋（Public Housing）": "住宅类别",
+    "房委会资助出售单位（HA Subsidized Sale Flats）": "住宅类别",
+    "私人房屋（Private Housing）": "住宅类别",
+    "其他房屋（Other Housing）": "住宅类别",
+    "食肆（Restaurant）": "商业类别",
+    "零售（Retail）": "商业类别",
+    "办公室（Office）": "商业类别",
+    "住宿（Accommodation）": "商业类别",
+    "医疗（Human Health）": "商业类别",
+    "教育（Education）": "商业类别",
+    "数据中心（Data Centre）": "商业类别",
+    "其他商业（Other Commercial）": "商业类别",
+    "纺织及服装制品（Textile & Wearing Apparel）": "工业类别",
+    "非制造业（Non-manufacturing）": "工业类别",
+    "食品及饮品（Food & Beverage）": "工业类别",
+    "金属及机械（Metal & Machinery）": "工业类别",
+    "其他工业（Other Industrial）": "工业类别",
+    "绝对噪声相关": "非评估类别",
+    "交通基础设施": "非评估类别",
+    "临时/杂项设施": "非评估类别",
+    "置信度过低归为非评估": "非评估类别",
+    "AI/Rule判定为噪声": "非评估类别",
+    "Non-assessed (非评估类别)": "非评估类别",
+    "Absolute Noise Related (绝对噪声相关)": "非评估类别",
+    "Transport Infrastructure (交通基础设施)": "非评估类别",
+    "Temporary/Misc Facilities (临时/杂项设施)": "非评估类别",
+    "未知类别": "未知类别",
+    "Unknown (未知类别)": "未知类别",
+    "未知混合": "混合用途",
+    "Unknown Mixed (未知混合)": "混合用途"
+  },
+  "MAIN_CLASS_DICT": {
+    "住宅类别": "Residential (住宅类别)",
+    "商业类别": "Commercial (商业类别)",
+    "工业类别": "Industrial (工业类别)",
+    "混合用途": "Mixed-use (混合用途)",
+    "非评估类别": "Non-assessed (非评估类别)",
+    "未知类别": "Unknown (未知类别)"
+  },
+  "SUB_CLASS_PATCH_DICT": {
+    "绝对噪声相关": "Absolute Noise Related (绝对噪声相关)",
+    "交通基础设施": "Transport Infrastructure (交通基础设施)",
+    "临时/杂项设施": "Temporary/Misc Facilities (临时/杂项设施)",
+    "未知类别": "Unknown (未知类别)",
+    "未知混合": "Unknown Mixed (未知混合)",
+    "非评估类别": "Non-assessed (非评估类别)",
+    "AI/Rule判定为噪声": "Noise Assessed by AI/Rule (AI/Rule判定为噪声)",
+    "置信度过低归为非评估": "Discarded due to Low ML Confidence (置信度过低归为非评估)"
+  }
+}

@@ -16,15 +16,12 @@ from config import (
     LLM_VERIFICATION_OUTPUT,       
     LLM_CONFIDENCE_THRESHOLD,      
     BATCH_SAVE_INTERVAL,           
-    LLM_TAXONOMY                   
+    LLM_TAXONOMY,
+    API_KEY,
+    BASE_URL,
+    CLOUD_MODEL_NAME
 )
 from utils import safe_str
-
-# API_KEY = "sk-zk2590f30b5f31abb98564d0759f728273269cb5de2bdf01"
-API_KEY = "sk-zk2021648b29a1a75397af794457c96f17e68357ccb66501"
-
-BASE_URL = "https://api.zzz-api.top/v1" 
-CLOUD_MODEL_NAME = 'hunyuan-standard-256k'
 
 import httpx 
 custom_client = httpx.Client(trust_env=False, verify=False)
@@ -265,7 +262,7 @@ class Logger(object):
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
-    log_dir = os.path.join(base_dir, "log")
+    log_dir = os.path.join(os.path.dirname(base_dir), "log")
     os.makedirs(log_dir, exist_ok=True)
     
     log_file_path = os.path.join(log_dir, "4.llm_verification.txt")

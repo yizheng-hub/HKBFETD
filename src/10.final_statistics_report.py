@@ -7,10 +7,13 @@ import os
 import sys
 import re
 import json
+import math
+import io
 import pandas as pd
 import geopandas as gpd
 from collections import defaultdict
 import warnings
+from contextlib import redirect_stderr
 
 warnings.filterwarnings('ignore')
 
@@ -28,7 +31,8 @@ else:
 # =================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, "log")
+PROJECT_DIR = os.path.dirname(BASE_DIR)
+LOG_DIR = os.path.join(PROJECT_DIR, "log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 INPUT_CSV = ML_FINAL_OUTPUT_PATH
@@ -182,17 +186,32 @@ def qa_subclass_consistency(df: pd.DataFrame):
     return pd.DataFrame(issues)
 
 
-def load_and_scan_data():
-    print("=" * 70)
-    print("[INFO] Status message emitted.")
-    print("=" * 70)
+def _read_geojson_quiet(path, **kwargs):
+    # Suppress noisy GDAL/OGR stderr warnings for unsupported non-scalar fields.
+    err_buffer = io.StringIO()
+    with redirect_stderr(err_buffer):
+        return gpd.read_file(path, **kwargs)
 
+
+def _write_geojson_quiet(gdf, path):
+    # Suppress noisy GDAL/OGR stderr warnings for unsupported non-scalar fields.
+    err_buffer = io.StringIO()
+    with redirect_stderr(err_buffer):
+        gdf.to_file(path, driver='GeoJSON')
+
+
+def load_and_scan_data():
     if not os.path.exists(INPUT_CSV) or not os.path.exists(INPUT_GEOJSON):
-        print("[INFO] Status message emitted.")
+        print("[ERROR] Step 9 outputs are missing. Run step 9 before step 10.")
         sys.exit(1)
 
     df = pd.read_csv(INPUT_CSV, low_memory=False)
-    gdf = gpd.read_file(INPUT_GEOJSON)
+    gdf = _read_geojson_quiet(INPUT_GEOJSON)
+    if 'BUILDINGSTRUCTUREID' in gdf.columns:
+        gdf = gdf[['BUILDINGSTRUCTUREID', 'geometry']].copy()
+    else:
+        gdf = gdf[['geometry']].copy()
+        gdf['BUILDINGSTRUCTUREID'] = ""
 
     if 'BUILDINGSTRUCTUREID' in df.columns:
         df['BUILDINGSTRUCTUREID'] = df['BUILDINGSTRUCTUREID'].apply(normalize_id)
@@ -202,15 +221,10 @@ def load_and_scan_data():
     if 'SHAPE_Area' not in df.columns:
         df['SHAPE_Area'] = gdf.area
 
-    print("[INFO] Status message emitted.")
     return df, gdf
 
 
 def generate_statistics(df):
-    print("\n" + "=" * 70)
-    print("[INFO] Status message emitted.")
-    print("=" * 70)
-
     total_buildings = len(df)
     main_counts = df['Calibrated_Main_Class'].value_counts()
     mixed_df = df[df['Calibrated_Main_Class'] == '混合用途']
@@ -242,40 +256,26 @@ def generate_statistics(df):
                 gfa_by_sub[sub] += split_gfa
                 gfa_by_main[main] += split_gfa
 
-    print("[INFO] Status message emitted.")
-    for k, v in main_counts.items():
-        print("[INFO] Status message emitted.")
-
-    print("\n" + "-" * 50)
-    print("[INFO] Status message emitted.")
-    print("-" * 50)
-
     total_gfa_all = sum(gfa_by_main.values()) or 1.0
-    for k, v in sorted(gfa_by_main.items(), key=lambda item: item[1], reverse=True):
-        print("[INFO] Status message emitted.")
+    _ = (total_buildings, main_counts, total_gfa_all, gfa_by_sub)
 
-    print("[INFO] Status message emitted.")
-    for k, v in sorted(gfa_by_sub.items(), key=lambda item: item[1], reverse=True):
-        if v > 0:
-            print("[INFO] Status message emitted.")
+
+def _to_safe_geojson_scalar(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return ""
+    return value
 
 
 def generate_public_dataset(df, gdf):
-    print("\n" + "=" * 70)
-    print("[INFO] Status message emitted.")
-    print("=" * 70)
-
-    df_fixed, change_log = repair_subclass_consistency(df)
+    df_fixed, _ = repair_subclass_consistency(df)
 
     qa_issues = qa_subclass_consistency(df_fixed)
-    print("[INFO] Status message emitted.")
     if len(qa_issues) > 0:
-        print("[INFO] Status message emitted.")
-        print(qa_issues.head(10).to_string(index=False))
-
-    change_log_path = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1_change_log_from_step10.csv")
-    change_log.to_csv(change_log_path, index=False, encoding='utf-8-sig')
-    print("[INFO] Status message emitted.")
+        print(f"[WARN] Subclass consistency issues detected: {len(qa_issues)}")
 
     export_mapping = {
         'BUILDINGSTRUCTUREID': 'Building_ID_建筑ID',
@@ -353,8 +353,6 @@ def generate_public_dataset(df, gdf):
         'OZP_Zone_Desc_EN_法定图则英文描述'
     ]
 
-    print("[INFO] Status message emitted.")
-
     df_renamed = df_fixed.rename(columns=export_mapping)
     final_cols = [c for c in export_columns_order if c in df_renamed.columns]
     public_df = df_renamed[final_cols].copy()
@@ -373,9 +371,7 @@ def generate_public_dataset(df, gdf):
         public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(translate_mix_prop)
 
     public_df.to_csv(PUBLIC_CSV, index=False, encoding='utf-8-sig')
-    print("[INFO] Status message emitted.")
-
-    print("[INFO] Status message emitted.")
+    print(f"[INFO] Public CSV exported: {PUBLIC_CSV}")
 
     gdf_merge = gdf[['BUILDINGSTRUCTUREID', 'geometry']].copy()
     gdf_merge['_merge_id'] = gdf_merge['BUILDINGSTRUCTUREID'].apply(normalize_id)
@@ -393,14 +389,11 @@ def generate_public_dataset(df, gdf):
 
     for col in public_gdf.columns:
         if col != 'geometry' and public_gdf[col].dtype == object:
+            public_gdf[col] = public_gdf[col].apply(_to_safe_geojson_scalar)
             public_gdf[col] = public_gdf[col].fillna('').astype(str).replace('nan', '')
 
-    public_gdf.to_file(PUBLIC_GEOJSON, driver='GeoJSON')
-    print("[INFO] Status message emitted.")
-
-    print("\n" + "=" * 70)
-    print("[INFO] Status message emitted.")
-    print("=" * 70)
+    _write_geojson_quiet(public_gdf, PUBLIC_GEOJSON)
+    print(f"[INFO] Public GeoJSON exported: {PUBLIC_GEOJSON}")
 
     readme_text = """
 HK_UBEM_Buildings_Public_v1 Dataset
@@ -440,7 +433,7 @@ are fully bilingual (English & Chinese) to ensure international accessibility.
 [Coordinate System]
 EPSG:2326 (Hong Kong 1980 Grid).
 """
-    print(readme_text)
+    _ = readme_text
 
 
 class Logger(object):
@@ -467,13 +460,10 @@ if __name__ == "__main__":
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout
 
-    print("[INFO] Status message emitted.")
-
     try:
         df, gdf = load_and_scan_data()
-        generate_statistics(df)
         generate_public_dataset(df, gdf)
-        print("[INFO] Status message emitted.")
+        print("[INFO] Step 10 completed.")
     except Exception as e:
         import traceback
         traceback.print_exc()

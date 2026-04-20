@@ -1,0 +1,29 @@
+name: HKbuilding
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - geopandas
+  - shapely
+  - pyproj
+  - pyarrow
+  - scikit-learn
+  - lightgbm
+  - imbalanced-learn
+  - matplotlib
+  - seaborn
+  - folium
+  - tqdm
+  - pyogrio
+  - fiona
+  - jupyterlab
+  - pip:
+      - openai>=1.30.0
+      - httpx>=0.27.0
+      - opencc-python-reimplemented>=0.1.7
+      - pyrosm>=0.6.2
+      - fuzzywuzzy>=0.18.0
+      - python-Levenshtein>=0.25.0

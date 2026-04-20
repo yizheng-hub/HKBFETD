@@ -1,0 +1,13 @@
+Task: Arbitrate geometric fragmentation in Hong Kong. 
+The image is a side-by-side view: Left is the plain satellite map, Right is the overlay where Red = unknown fragment, Green = host building.
+
+CRITICAL RULES:
+1. Podium-Tower Rule ("merge"): If the left plain image shows the red polygon is a vertical tower sitting on top of the green podium's roof, you MUST output "merge".
+2. Separation Rule ("keep"): If the left plain image shows they are clearly separated independent structures with a **horizontal physical gap on the 2D plane** (e.g. shadow between them), you MUST output "keep". 
+   -> FATAL WARNING: Do NOT confuse a 3D height difference (a tower sitting atop a podium) with a 2D horizontal gap! If it sits ON TOP of the podium, it's NOT a gap, it must be "merge".
+3. Noise Rule ("delete"): ONLY output "delete" if the red polygon is clearly NOT a building (e.g., it is a dark ground shadow, a tiny rooftop vent, or empty road).
+
+Context: Host Building Class is {host_class}.
+
+Respond in strict JSON: 
+{{"reasoning": "briefly analyze the left plain image vs right overlay", "decision": "keep/merge/delete", "confidence": 0.0-1.0}}

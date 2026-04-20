@@ -31,6 +31,53 @@ from utils import init_keyword_tool, classify_text_by_keywords, safe_str, to_sim
 warnings.filterwarnings('ignore')
 tqdm.pandas()
 
+
+def _make_bilingual_note(en_text, zh_text):
+    en = str(en_text or "").strip()
+    zh = str(zh_text or "").strip()
+    if not en:
+        return zh
+    if not zh:
+        return en
+    return f"{en}_{zh}"
+
+
+def normalize_calibrated_note_to_bilingual(note):
+    text = str(note or "").strip()
+    if not text:
+        return text
+
+    # Already bilingual in "EN_ZH" form.
+    if "_" in text:
+        left, right = text.split("_", 1)
+        if re.search(r"[A-Za-z]", left) and re.search(r"[\u4e00-\u9fff]", right):
+            return text
+
+    if "保留规则确定性结论" in text:
+        return _make_bilingual_note("Rule conclusion retained", text)
+    if "保留被判定为噪声/非评估的建筑" in text:
+        return _make_bilingual_note("Protected as noise/non-evaluable building", text)
+    if "全流程未识别,小面积归住宅" in text:
+        return _make_bilingual_note("No rule recognized; small footprint fallback to residential", text)
+    if "强制兜底为商业" in text:
+        return _make_bilingual_note("Forced fallback to commercial", text)
+
+    if "ML推断置信度过低" in text:
+        return _make_bilingual_note("ML confidence too low", text)
+
+    if "ML覆盖[" in text and "ML多标签混合" in text:
+        return _make_bilingual_note("ML override with multi-label mixture", text)
+    if "ML覆盖[" in text and "ML回归精准分配" in text:
+        return _make_bilingual_note("ML override with regression-based subclass allocation", text)
+    if "ML推断填补-" in text and "ML多标签混合" in text:
+        return _make_bilingual_note("ML completion with multi-label mixture", text)
+    if "ML推断填补-" in text and "ML回归精准分配" in text:
+        return _make_bilingual_note("ML completion with regression-based subclass allocation", text)
+
+    # Safe fallback for any unmatched legacy note.
+    return _make_bilingual_note("Pipeline decision note", text)
+
+
 def load_ml_inputs():
     print("[INFO] Status message emitted.")
     try:
@@ -285,6 +332,7 @@ def apply_ml_calibration(df_rule_classified, predictions_proba, subclass_props, 
     tqdm.pandas(desc="执行终极校准与防篡改验证")
     final_cols = df_to_calibrate.progress_apply(final_calibration, axis=1, result_type='expand')
     final_cols.columns = ['Calibrated_Main_Class', 'Calibrated_Sub_Class', 'Calibrated_Mix_Proportion', 'Calibrated_Source', 'Calibrated_Notes']
+    final_cols['Calibrated_Notes'] = final_cols['Calibrated_Notes'].apply(normalize_calibrated_note_to_bilingual)
     
     print("[INFO] Status message emitted.")
     override_mask = final_cols['Calibrated_Notes'].str.contains('ML覆盖', na=False)
@@ -385,7 +433,7 @@ class Logger(object):
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(base_dir, "log")
+    log_dir = os.path.join(os.path.dirname(base_dir), "log")
     os.makedirs(log_dir, exist_ok=True)
     
     log_file_path = os.path.join(log_dir, "9.ml_classification.txt")
