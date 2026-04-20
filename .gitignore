@@ -5,19 +5,29 @@ __pycache__/
 .env
 .venv/
 
-log/
-intermediate_files/
+log/*
+!log/.gitkeep
+
+intermediate_files/*
+!intermediate_files/.gitkeep
+
+data/**
+!data/
+!data/.gitkeep
+!data/LandsD/
+data/LandsD/**
+!data/LandsD/.gitkeep
+!data/OZP_Zones/
+data/OZP_Zones/**
+!data/OZP_Zones/.gitkeep
 
 # Keep output folder, but ignore everything inside by default.
 output/*
+!output/.gitkeep
 
 # Publish-ready outputs (allowed to commit)
 !output/HK_UBEM_Buildings_Public_v1.csv
 !output/HK_UBEM_Buildings_Public_v1.geojson
-
-# Optional: include step9 calibrated outputs if needed for reproducibility
-!output/step9_ml_calibrated_classification.csv
-!output/step9_ml_calibrated_classification.geojson
 
 *.log
 *.tmp
