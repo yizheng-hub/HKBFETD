@@ -182,13 +182,13 @@ AI_DECISION_SAVE_INTERVAL = 5
 # - HKBFETD_API_KEY
 # - HKBFETD_CLOUD_MODEL_NAME
 BASE_URL = os.getenv("HKBFETD_BASE_URL", "https://api.zzz-api.top/v1")
-API_KEY = os.getenv("HKBFETD_API_KEY", "sk-zk23b4b8e962c041ca80018b8eb24815bc869b80a1bd6aab")
+API_KEY = os.getenv("HKBFETD_API_KEY", "")
 CLOUD_MODEL_NAME = os.getenv("HKBFETD_CLOUD_MODEL_NAME", "hunyuan-standard-256k")
 
 # Geometry arbitration (vision) API settings
 # - HKBFETD_VISION_API_KEY
 # - HKBFETD_VISION_CLOUD_MODEL_NAME
-VISION_API_KEY = os.getenv("HKBFETD_VISION_API_KEY", "sk-zk23b4b8e962c041ca80018b8eb24815bc869b80a1bd6aab")
+VISION_API_KEY = os.getenv("HKBFETD_VISION_API_KEY", "")
 VISION_CLOUD_MODEL_NAME = os.getenv("HKBFETD_VISION_CLOUD_MODEL_NAME", "hunyuan-turbos-vision")
 
 def load_llm_taxonomy(file_path=LLM_TAXONOMY_FILE):
