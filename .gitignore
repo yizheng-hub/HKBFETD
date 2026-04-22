@@ -25,10 +25,6 @@ data/OZP_Zones/**
 output/*
 !output/.gitkeep
 
-# Publish-ready outputs (allowed to commit)
-!output/HK_UBEM_Buildings_Public_v1.csv
-!output/HK_UBEM_Buildings_Public_v1.geojson
-
 *.log
 *.tmp
 *.bak
