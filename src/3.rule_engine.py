@@ -1,4 +1,4 @@
-"""Module documentation."""
+﻿# rule_engine.py
 
 import os
 import sys
@@ -220,7 +220,6 @@ SUB_CLASS_STANDARD_MAP = {
 }
 
 def standardize_main_class(main_class_name):
-    """Function documentation."""
     if pd.isna(main_class_name) or main_class_name is None:
         return '未知类别'
     
@@ -236,7 +235,6 @@ def standardize_main_class(main_class_name):
 import re
 
 def normalize_sub_class_name(s):
-    """Function documentation."""
     if not isinstance(s, str):
         return ''
     s = s.strip()
@@ -281,7 +279,6 @@ def standardize_sub_class(sub_class_name, is_mixed_use=False):
 
 
 def classify_podium_commercial_poi(row, keyword_tool):
-    """Function documentation."""
     a = str(row.get('amenity', '')).strip().lower()
     s = str(row.get('shop', '')).strip().lower()
 
@@ -331,7 +328,6 @@ def classify_podium_commercial_poi(row, keyword_tool):
 
 
 def detect_strong_commercial_podium(info, osm_records, keyword_tool):
-    """Function documentation."""
     structure_type = str(
         info.get('BUILDINGSTRUCTURETYPE',
         info.get('STRUCTURETYPE',
@@ -380,7 +376,6 @@ def detect_strong_commercial_podium(info, osm_records, keyword_tool):
 
 
 def calculate_area_proportions(info, osm_records=None, keyword_tool=None, return_trace=False):
-    """Function documentation."""
 
     recalc_trace = []
     recalc_counts = {}
@@ -604,7 +599,6 @@ def calculate_area_proportions(info, osm_records=None, keyword_tool=None, return
 
 
 def format_recalc_trace_for_display(recalc_trace):
-    """Function documentation."""
     parts = []
     for item in recalc_trace:
         name = str(item.get("name", "")).strip()
@@ -629,7 +623,6 @@ def format_recalc_trace_for_display(recalc_trace):
 
 
 def format_proportion_string(proportions):
-    """Function documentation."""
     if not proportions:
         return ""
     
@@ -640,7 +633,6 @@ def format_proportion_string(proportions):
 
 
 def classify_building_rule_engine_optimized(group, keyword_tool):
-    """Function documentation."""
     info = group.iloc[0]
     result = {
         'Final_Main_Class': '未知类别', 
@@ -874,8 +866,6 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             winner_main = '混合用途'
             result['Is_Mixed_Use'] = True
 
-    # =========================
-    # =========================
     override_to_commercial, podium_sub, podium_counts = detect_strong_commercial_podium(
         info, osm_records, keyword_tool
     )
@@ -968,26 +958,18 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
 
 
 def load_rule_engine_inputs():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     try:
-        print("[INFO] Status message emitted.")
         gdf_aggregated = gpd.read_file(AGGREGATED_GDF_PATH)
         
         if gdf_aggregated.crs is None:
             gdf_aggregated = gdf_aggregated.set_crs("EPSG:2326", allow_override=True)
-        print("[INFO] Status message emitted.")
         
-        print("[INFO] Status message emitted.")
         gdf_official_library_full = gpd.read_file(OFFICIAL_LIB_BASE_PATH)
         gdf_official_library_full = gdf_official_library_full.set_crs("EPSG:2326", allow_override=True)
-        print("[INFO] Status message emitted.")
         
-        print("[INFO] Status message emitted.")
         with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
             KEYWORDS_CONFIG = json.load(f)
-        print("[INFO] Status message emitted.")
         
         return {
             'gdf_aggregated': gdf_aggregated,
@@ -996,21 +978,16 @@ def load_rule_engine_inputs():
         }
         
     except FileNotFoundError as e:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         print(f"  1. {AGGREGATED_GDF_PATH}")
         print(f"  2. {OFFICIAL_LIB_BASE_PATH}")
         print(f"  3. {KEYWORDS_FILE}")
         return None
     except Exception as e:
-        print("[INFO] Status message emitted.")
         import traceback
         traceback.print_exc()
         return None
 
 def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     gdf_aggregated['Classification_Stage'] = '待评估'
     
@@ -1026,22 +1003,18 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     pre_screen_mask = kw_mask | (is_tiny_area & ~has_bdbiar & ~has_osm & ~has_valid_name)
     
     gdf_aggregated.loc[pre_screen_mask, 'Classification_Stage'] = '已预筛选'
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     gdf_aggregated['Pre_Class_Main'] = gdf_aggregated['CATEGORY'].astype(str).map(LANDSD_CATEGORY_MAP_MAIN)
     gdf_aggregated['Pre_Class_Sub'] = gdf_aggregated['CATEGORY'].astype(str).map(LANDSD_CATEGORY_MAP_SUB)
     
     assessable_data = gdf_aggregated[gdf_aggregated['Classification_Stage'] == '待评估'].copy()
-    print("[INFO] Status message emitted.")
     
-    tqdm.pandas(desc="规则引擎分类")
+    tqdm.pandas(desc="Rule-engine classification")
     rule_engine_results = assessable_data.groupby('BUILDINGSTRUCTUREID').progress_apply(
         lambda group: classify_building_rule_engine_optimized(group, keyword_tool)
     )
 
-    print("[INFO] Status message emitted.")
     df_rule_classified_final = gdf_official_library_full[['BUILDINGSTRUCTUREID', 'geometry']].copy()
 
     df_rule_classified_final = df_rule_classified_final.merge(
@@ -1066,7 +1039,6 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     df_rule_classified_final.loc[unknown_mask, 'Final_Sub_Class'] = '未知类别'
     df_rule_classified_final.loc[unknown_mask, 'Classification_Source'] = 'Unknown'
 
-    print("[INFO] Status message emitted.")
     def post_process(row):
         main = row['Final_Main_Class']
         sub = row['Final_Sub_Class']
@@ -1097,11 +1069,10 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
             row.get('Is_Conflicted', False)
         ])
     
-    tqdm.pandas(desc="后处理修正")
+    tqdm.pandas(desc="Post-processing adjustments")
     post_processed = df_rule_classified_final.progress_apply(post_process, axis=1)
     df_rule_classified_final[['Final_Main_Class', 'Final_Sub_Class', 'Classification_Source', 'Is_Conflicted']] = post_processed
 
-    print("[INFO] Status message emitted.")
     mixed_mask = df_rule_classified_final['Is_Mixed_Use'] == True
     non_mixed_mask = ~mixed_mask
     df_rule_classified_final.loc[non_mixed_mask, 'Final_Main_Class'] = df_rule_classified_final.loc[non_mixed_mask, 'Final_Main_Class'].apply(standardize_main_class)
@@ -1116,7 +1087,6 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     )
     
     geojson_output_path = RULE_ENGINE_OUTPUT_PATH.replace('.csv', '.geojson')
-    print("[INFO] Status message emitted.")
     
     gdf_export = df_rule_classified_final.copy()
     for col in gdf_export.columns:
@@ -1124,31 +1094,23 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
             gdf_export[col] = gdf_export[col].astype(str)
             
     gdf_export.to_file(geojson_output_path, driver='GeoJSON')
-    print("[INFO] Status message emitted.")
 
 
 
 
 
 
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     print(df_rule_classified_final['Final_Main_Class'].value_counts(dropna=False).to_markdown())
 
-    print("[INFO] Status message emitted.")
     print(df_rule_classified_final['Final_Sub_Class'].value_counts(dropna=False).head(10).to_markdown())
 
-    print("[INFO] Status message emitted.")
 
     return df_rule_classified_final
 
 def evaluate_rule_engine_results(df_rule_classified_final, gdf_official_library):
-    """Function documentation."""
     if not RUN_RULE_ENGINE_EVALUATION:
-        print("[INFO] Status message emitted.")
         return
     
-    print("[INFO] Status message emitted.")
     
     try:
         if 'geometry' not in df_rule_classified_final.columns or df_rule_classified_final.geometry.isna().all():
@@ -1163,19 +1125,15 @@ def evaluate_rule_engine_results(df_rule_classified_final, gdf_official_library)
             df_to_evaluate = df_rule_classified_final.copy()
         
         unknown_buildings = df_to_evaluate[df_to_evaluate['Final_Main_Class'] == '未知类别']
-        print("[INFO] Status message emitted.")
         
         if len(unknown_buildings) > 0 and 'geometry' in unknown_buildings.columns:
             visualize_unknowns_on_map(unknown_buildings)
         
     except Exception as e:
-        print("[INFO] Status message emitted.")
         import traceback
         traceback.print_exc()
 
 def visualize_unknowns_on_map(unknown_gdf, num_samples=NUM_MAP_SAMPLES):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     samples = unknown_gdf.sample(min(num_samples, len(unknown_gdf)), random_state=42)
     transformer = Transformer.from_crs("EPSG:2326", "EPSG:4326", always_xy=True)
@@ -1194,7 +1152,6 @@ def visualize_unknowns_on_map(unknown_gdf, num_samples=NUM_MAP_SAMPLES):
     folium.TileLayer('openstreetmap', name='OpenStreetMap').add_to(m)
     folium.LayerControl().add_to(m)
     
-    print("[INFO] Status message emitted.")
     for _, row in tqdm(samples.iterrows(), total=len(samples)):
         if row.geometry is None or row.geometry.is_empty:
             continue
@@ -1225,25 +1182,18 @@ def visualize_unknowns_on_map(unknown_gdf, num_samples=NUM_MAP_SAMPLES):
         ).add_to(m)
     
     m.save(UNKNOWN_MAP_PATH)
-    print("[INFO] Status message emitted.")
     
     try:
         webbrowser.open(UNKNOWN_MAP_PATH)
     except Exception as e:
-        print("[INFO] Status message emitted.")
+        pass
 
 def main():
-    """Function documentation."""
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
     data_dict = load_rule_engine_inputs()
     if data_dict is None:
-        print("[INFO] Status message emitted.")
         return False
     
-    print("[INFO] Status message emitted.")
     keyword_tool = init_keyword_tool()
     
     df_result = run_rule_engine(
@@ -1257,15 +1207,9 @@ def main():
     try:
         df_result.to_csv(RULE_ENGINE_INTERMEDIATE, index=False, encoding='utf-8-sig')
     except Exception as e:
-        print("[INFO] Status message emitted.")
+        pass
     
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     
     return True
 
@@ -1295,16 +1239,13 @@ if __name__ == "__main__":
     
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout
-    print("[INFO] Status message emitted.")
 
     try:
         success = main()
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
-        print("[INFO] Status message emitted.")
         sys.exit(0)
     except Exception as e:
-        print("[INFO] Status message emitted.")
         import traceback
         traceback.print_exc()
         sys.exit(1)

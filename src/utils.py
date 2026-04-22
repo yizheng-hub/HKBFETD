@@ -15,7 +15,7 @@ from pyproj import Transformer
 try:
     cc = OpenCC('t2s')
 except Exception as e:
-    print("[INFO] Status message emitted.")
+    pass  # placeholder log removed
     class DummyOpenCC:
         def convert(self, text):
             return text

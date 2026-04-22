@@ -1,4 +1,4 @@
-# 6.geometry_ai_arbitration.py
+﻿# 6.geometry_ai_arbitration.py
 
 import os
 import sys
@@ -13,7 +13,6 @@ else:
     fallback_path = os.path.join(conda_prefix, 'share', 'proj')
     os.environ['PROJ_LIB'] = fallback_path
     os.environ['PROJ_DATA'] = fallback_path
-# =========================================================
 
 import warnings
 import pandas as pd
@@ -67,7 +66,6 @@ tqdm.pandas()
 
 
 def create_side_by_side_b64(plain_path, overlay_path):
-    """Function documentation."""
     try:
         img_plain = Image.open(plain_path)
         img_overlay = Image.open(overlay_path)
@@ -95,7 +93,6 @@ def extract_json_from_text(text):
     return None
 
 def test_api_model(model_name, prompt, b64_stitched):
-    """Function documentation."""
     messages = [
         {"role": "system", "content": "You are a precise GIS AI. Follow rules strictly."},
         {"role": "user", "content": [
@@ -116,7 +113,6 @@ def test_api_model(model_name, prompt, b64_stitched):
         return "error", str(e)
 
 def load_prompt_template():
-    """Function documentation."""
     if not os.path.exists(AI_PROMPT_PATH):
         default_dir = os.path.dirname(AI_PROMPT_PATH)
         if not os.path.exists(default_dir): os.makedirs(default_dir, exist_ok=True)
@@ -142,43 +138,31 @@ Respond in strict JSON:
         return f.read()
 
 def clean_id_global(x):
-    """Function documentation."""
     s = str(x).strip()
     return s[:-2] if s.endswith('.0') else s
 
 def load_ai_arbitration_inputs():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     try:
         if os.path.exists(ABSOLUTE_FINAL_GEOJSON):
-            print("[INFO] Status message emitted.")
             df_rule_classified = gpd.read_file(ABSOLUTE_FINAL_GEOJSON)
             if df_rule_classified.crs is None:
                 df_rule_classified = df_rule_classified.set_crs("EPSG:2326", allow_override=True)
         elif os.path.exists(ABSOLUTE_FINAL_CSV):
-            print("[INFO] Status message emitted.")
             df_rule_classified = pd.read_csv(ABSOLUTE_FINAL_CSV, low_memory=False)
         else:
-            print("[INFO] Status message emitted.")
             return None
         
-        print("[INFO] Status message emitted.")
         
-        print("[INFO] Status message emitted.")
         gdf_official_library = gpd.read_file(OFFICIAL_LIB_BASE_PATH)
         gdf_official_library = gdf_official_library.set_crs("EPSG:2326", allow_override=True)
-        print("[INFO] Status message emitted.")
         
         gdf_aggregated = None
         if os.path.exists(AGGREGATED_GDF_PATH):
-            print("[INFO] Status message emitted.")
             gdf_aggregated = gpd.read_file(AGGREGATED_GDF_PATH)
             if gdf_aggregated.crs is None:
                 gdf_aggregated = gdf_aggregated.set_crs("EPSG:2326", allow_override=True)
-            print("[INFO] Status message emitted.")
         
-        print("[INFO] Status message emitted.")
         if 'BUILDINGSTRUCTUREID' in df_rule_classified.columns:
             df_rule_classified['BUILDINGSTRUCTUREID'] = df_rule_classified['BUILDINGSTRUCTUREID'].apply(clean_id_global)
         if 'BUILDINGSTRUCTUREID' in gdf_official_library.columns:
@@ -193,82 +177,65 @@ def load_ai_arbitration_inputs():
         }
         
     except FileNotFoundError as e:
-        print("[INFO] Status message emitted.")
         return None
     except Exception as e:
-        print("[INFO] Status message emitted.")
         traceback.print_exc()
         return None
 
 def generate_candidates_and_images_final_v15(rule_classified_df, official_gdf, num_to_process=None):
-    """Function documentation."""
     try:
         import contextily as cx
         CACHE_DIR = CONTEXTILY_CACHE_DIR
         if not os.path.exists(CACHE_DIR):
             os.makedirs(CACHE_DIR, exist_ok=True)
         cx.set_cache_dir(CACHE_DIR)
-        print("[INFO] Status message emitted.")
     except ImportError:
-        print("[INFO] Status message emitted.")
         cx = None
 
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     official_gdf_processed = official_gdf.copy()
     invalid_mask = ~official_gdf_processed.geometry.is_valid
     if invalid_mask.any():
-        print("[INFO] Status message emitted.")
         official_gdf_processed.loc[invalid_mask, 'geometry'] = official_gdf_processed.loc[invalid_mask, 'geometry'].buffer(0)
         
     fragments = rule_classified_df[rule_classified_df['Final_Main_Class'] == '未知类别'].copy()
     hosts = rule_classified_df[~rule_classified_df['Final_Main_Class'].isin(['未知类别', '非评估类别'])].copy()
     
     if fragments.empty or hosts.empty:
-        print("[INFO] Status message emitted.")
         return pd.DataFrame()
         
-    print("[INFO] Status message emitted.")
 
-    print("[INFO] Status message emitted.")
     
     if os.path.exists(CANDIDATES_PAIRS_PATH):
-        print("[INFO] Status message emitted.")
         df_all_candidates = pd.read_csv(CANDIDATES_PAIRS_PATH)
     else:
-        print("[INFO] Status message emitted.")
         gdf_all = official_gdf_processed.set_index('BUILDINGSTRUCTUREID')
         gdf_hosts = gdf_all.loc[gdf_all.index.isin(hosts['BUILDINGSTRUCTUREID'].values)]
         all_candidate_pairs = []
         
         gdf_hosts_sindex = gdf_hosts.sindex
         
-        for frag_id in tqdm(fragments['BUILDINGSTRUCTUREID'], desc="寻找所有配对"):
-            if frag_id not in gdf_all.index: continue
-            fragment_geom = gdf_all.loc[frag_id].geometry
-            if fragment_geom is None or fragment_geom.is_empty: continue
-            
-            search_area = fragment_geom.buffer(NEIGHBOR_SEARCH_BUFFER)
-            possible_host_ilocs = gdf_hosts_sindex.query(search_area, predicate='intersects')
-            
-            if len(possible_host_ilocs) > 0:
-                candidate_hosts = gdf_hosts.iloc[possible_host_ilocs]
-                actual_intersecting_hosts = candidate_hosts[candidate_hosts.geometry.intersects(search_area)]
-                for host_id in actual_intersecting_hosts.index:
-                    all_candidate_pairs.append({'fragment_id': frag_id, 'host_id': host_id})
+    for frag_id in tqdm(fragments['BUILDINGSTRUCTUREID'], desc="Finding all candidate pairs"):
+        if frag_id not in gdf_all.index: continue
+        fragment_geom = gdf_all.loc[frag_id].geometry
+        if fragment_geom is None or fragment_geom.is_empty: continue
+        
+        search_area = fragment_geom.buffer(NEIGHBOR_SEARCH_BUFFER)
+        possible_host_ilocs = gdf_hosts_sindex.query(search_area, predicate='intersects')
+        
+        if len(possible_host_ilocs) > 0:
+            candidate_hosts = gdf_hosts.iloc[possible_host_ilocs]
+            actual_intersecting_hosts = candidate_hosts[candidate_hosts.geometry.intersects(search_area)]
+            for host_id in actual_intersecting_hosts.index:
+                all_candidate_pairs.append({'fragment_id': frag_id, 'host_id': host_id})
         
         if not all_candidate_pairs:
-            print("[INFO] Status message emitted.")
             return pd.DataFrame()
             
         df_all_candidates = pd.DataFrame(all_candidate_pairs).drop_duplicates()
         df_all_candidates.to_csv(CANDIDATES_PAIRS_PATH, index=False)
-        print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     gdf_all = official_gdf_processed.set_index('BUILDINGSTRUCTUREID')
     
@@ -289,7 +256,7 @@ def generate_candidates_and_images_final_v15(rule_classified_df, official_gdf, n
             return "keep"
 
     if 'rule_decision' not in df_all_candidates.columns:
-        tqdm.pandas(desc="应用启发式规则")
+        tqdm.pandas(desc="Applying heuristic rules")
         df_all_candidates['rule_decision'] = df_all_candidates.progress_apply(heuristic_rule_decision, axis=1)
     
     df_all_candidates['plain_image_path'] = df_all_candidates.apply(
@@ -300,10 +267,8 @@ def generate_candidates_and_images_final_v15(rule_classified_df, official_gdf, n
     )
     
     df_all_candidates.to_csv(CANDIDATES_RULES_PATH, index=False)
-    print("[INFO] Status message emitted.")
 
     df_candidates_to_process = df_all_candidates if num_to_process is None else df_all_candidates.head(num_to_process)
-    print("[INFO] Status message emitted.")
 
     if not os.path.exists(IMAGE_OUTPUT_DIR):
         os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
@@ -315,17 +280,15 @@ def generate_candidates_and_images_final_v15(rule_classified_df, official_gdf, n
         sample = df_candidates_to_process.sample(sample_size, random_state=42)
         all_exist = all(os.path.exists(r['plain_image_path']) and os.path.exists(r['overlay_image_path']) for _, r in sample.iterrows())
         if all_exist:
-            print("[INFO] Status message emitted.")
             return df_candidates_to_process
 
-    for _, pair in tqdm(df_candidates_to_process.iterrows(), total=len(df_candidates_to_process), desc="检查图像状态"):
+    for _, pair in tqdm(df_candidates_to_process.iterrows(), total=len(df_candidates_to_process), desc="Checking image status"):
         p_path = pair['plain_image_path']
         o_path = pair['overlay_image_path']
         if not (os.path.exists(p_path) and os.path.getsize(p_path) > 0 and 
                 os.path.exists(o_path) and os.path.getsize(o_path) > 0):
             needs_generation.append(pair)
             
-    print("[INFO] Status message emitted.")
     
     if len(needs_generation) == 0:
         return df_candidates_to_process
@@ -371,15 +334,13 @@ def generate_candidates_and_images_final_v15(rule_classified_df, official_gdf, n
             return False
 
     max_threads = 12 
-    print("[INFO] Status message emitted.")
     
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {executor.submit(process_image, pair): pair for pair in needs_generation}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="并发生成图像"):
+    for future in tqdm(as_completed(futures), total=len(futures), desc="Generating images in parallel"):
             if future.result():
                 generated_count += 1
 
-    print("[INFO] Status message emitted.")
     return df_candidates_to_process
 
 
@@ -408,12 +369,11 @@ def process_single_ai_task(row, host_class_map, prompt_template):
     else: decision = 'error'
 
     with print_lock:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
+        pass
 
     if decision == 'error':
         if 'quota' in reasoning.lower() or 'balance' in reasoning.lower():
-            raise ValueError(f"🚨 API 余额不足！强制停止。报错详情: {reasoning}")
+                        raise ValueError(f"API balance is insufficient. Forced stop. Details: {reasoning}")
         return None
 
     return {
@@ -425,11 +385,7 @@ def process_single_ai_task(row, host_class_map, prompt_template):
     }
 
 def generate_ai_decisions_with_api(df_candidates, gdf_all, rule_classified_df):
-    print("\n" + "="*50)
-    print("[INFO] Status message emitted.")
-    print("="*50)
 
-    print("[INFO] Status message emitted.")
     rule_classified_df['BUILDINGSTRUCTUREID'] = rule_classified_df['BUILDINGSTRUCTUREID'].astype(str)
     host_class_map = rule_classified_df.set_index('BUILDINGSTRUCTUREID')[['Final_Main_Class', 'Final_Sub_Class']].to_dict('index')
 
@@ -447,12 +403,8 @@ def generate_ai_decisions_with_api(df_candidates, gdf_all, rule_classified_df):
         if pair_key not in processed_pairs:
             tasks.append(row)
     
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
 
     if not tasks:
-        print("[INFO] Status message emitted.")
         return pd.read_csv(AI_DECISIONS_LOG_PATH)
 
     prompt_template = load_prompt_template()
@@ -465,7 +417,7 @@ def generate_ai_decisions_with_api(df_candidates, gdf_all, rule_classified_df):
             futures.append(executor.submit(process_single_ai_task, row, host_class_map, prompt_template))
             
         try:
-            for future in tqdm(as_completed(futures), total=len(futures), desc="API 并发推理中"):
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Running API inference in parallel"):
                 res = future.result()
                 if res:
                     results_buffer.append(res)
@@ -476,7 +428,6 @@ def generate_ai_decisions_with_api(df_candidates, gdf_all, rule_classified_df):
         except ValueError as ve:
             if '余额不足' in str(ve):
                 print(f"\n{ve}")
-                print("[INFO] Status message emitted.")
                 if results_buffer:
                     pd.DataFrame(results_buffer).to_csv(AI_DECISIONS_LOG_PATH, mode='a', header=False, index=False)
                 try:
@@ -490,12 +441,9 @@ def generate_ai_decisions_with_api(df_candidates, gdf_all, rule_classified_df):
     if results_buffer:
         pd.DataFrame(results_buffer).to_csv(AI_DECISIONS_LOG_PATH, mode='a', header=False, index=False)
 
-    print("[INFO] Status message emitted.")
     return pd.read_csv(AI_DECISIONS_LOG_PATH)
 
 def apply_ai_arbitration():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     try:
         df_rules = pd.read_csv(CANDIDATES_RULES_PATH)
@@ -542,30 +490,22 @@ def apply_ai_arbitration():
                 group['final_suggestion'] = group['suggestion']
             return group
             
-        tqdm.pandas(desc="处理多主体冲突")
+        tqdm.pandas(desc="Resolving multi-host conflicts")
         df_final_suggestions = df_combined.groupby('fragment_id').progress_apply(handle_multi_host_conflicts).reset_index(drop=True)
 
         df_final_suggestions.to_csv(FINAL_SUGGESTIONS_PATH, index=False)
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         print(df_final_suggestions['final_suggestion'].value_counts().to_markdown())
-        print("[INFO] Status message emitted.")
         return df_final_suggestions
     except Exception as e:
-        print("[INFO] Status message emitted.")
         return None
 
 def main():
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
     data = load_ai_arbitration_inputs()
     if not data: return False
     df_rules = data['df_rule_classified']
     gdf_official = data['gdf_official_library']
     
-    print("[INFO] Status message emitted.")
     if 'geometry' not in df_rules.columns:
         df_rules_geo = df_rules.merge(gdf_official[['BUILDINGSTRUCTUREID', 'geometry']], on='BUILDINGSTRUCTUREID', how='left')
         df_rules_geo = gpd.GeoDataFrame(df_rules_geo, geometry='geometry', crs=gdf_official.crs)
@@ -575,14 +515,11 @@ def main():
     candidates_df = generate_candidates_and_images_final_v15(df_rules_geo, gdf_official)
     if candidates_df is None or candidates_df.empty: return True
 
-    print("[INFO] Status message emitted.")
     gdf_all = gdf_official.set_index('BUILDINGSTRUCTUREID')
     generate_ai_decisions_with_api(candidates_df, gdf_all, df_rules)
 
-    print("[INFO] Status message emitted.")
     apply_ai_arbitration()
     
-    print("[INFO] Status message emitted.")
     return True
 
 class Logger(object):
@@ -613,7 +550,6 @@ if __name__ == "__main__":
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout 
     
-    print("[INFO] Status message emitted.")
     
     try:
         success = main()

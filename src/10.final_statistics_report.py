@@ -1,7 +1,6 @@
-# 10.final_statistics_report.py
+﻿# 10.final_statistics_report.py
 # -*- coding: utf-8 -*-
 
-"""Module documentation."""
 
 import os
 import sys
@@ -28,7 +27,6 @@ else:
     fallback_path = os.path.join(conda_prefix, 'share', 'proj')
     os.environ['PROJ_LIB'] = fallback_path
     os.environ['PROJ_DATA'] = fallback_path
-# =================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
@@ -55,7 +53,6 @@ SUB_CLASS_PATCH_DICT = _step10_mappings.get("SUB_CLASS_PATCH_DICT", {})
 
 
 def normalize_id(x):
-    """Function documentation."""
     if pd.isna(x):
         return ""
     s = str(x).strip()
@@ -79,6 +76,25 @@ def is_mixed_main_class(main_value: str) -> bool:
         return False
     s = str(main_value).strip().lower()
     return ("mixed" in s) or ("混合" in s)
+
+def canonicalize_main_label(value: str) -> str:
+    if pd.isna(value):
+        return "Unknown_未知类别"
+    s = str(value).strip()
+    low = s.lower()
+    if ("residential" in low) or ("住宅" in s):
+        return "Residential_住宅类别"
+    if ("commercial" in low) or ("商业" in s):
+        return "Commercial_商业类别"
+    if ("industrial" in low) or ("工业" in s):
+        return "Industrial_工业类别"
+    if ("mixed-use" in low) or ("mixed use" in low) or ("混合" in s):
+        return "Mixed-use_混合用途"
+    if ("non-assessed" in low) or ("non assessed" in low) or ("非评估" in s):
+        return "Non-assessed_非评估类别"
+    if ("unknown" in low) or ("未知" in s):
+        return "Unknown_未知类别"
+    return s
 
 def parse_proportion_string(prop_str: str):
     if pd.isna(prop_str):
@@ -155,7 +171,7 @@ def repair_subclass_consistency(df: pd.DataFrame):
             })
 
     changed_df = pd.DataFrame(changes)
-    print("[INFO] Status message emitted.")
+    print(f"[INFO] Subclass consistency repairs applied: {len(changed_df)}")
     return df_fixed, changed_df
 
 def qa_subclass_consistency(df: pd.DataFrame):
@@ -221,13 +237,16 @@ def load_and_scan_data():
     if 'SHAPE_Area' not in df.columns:
         df['SHAPE_Area'] = gdf.area
 
+    if 'Calibrated_Main_Class' in df.columns:
+        df['Calibrated_Main_Class'] = df['Calibrated_Main_Class'].apply(canonicalize_main_label)
+
     return df, gdf
 
 
 def generate_statistics(df):
     total_buildings = len(df)
-    main_counts = df['Calibrated_Main_Class'].value_counts()
-    mixed_df = df[df['Calibrated_Main_Class'] == '混合用途']
+    main_counts = df['Calibrated_Main_Class'].apply(canonicalize_main_label).value_counts()
+    mixed_df = df[df['Calibrated_Main_Class'].apply(is_mixed_main_class)]
     _ = mixed_df['Calibrated_Mix_Proportion'].value_counts()
 
     gfa_by_main = defaultdict(float)
@@ -461,6 +480,8 @@ if __name__ == "__main__":
     sys.stderr = sys.stdout
 
     try:
+        print(f"[INFO] Logging to: {log_file_path}")
+        print("[INFO] Step 10 started: final public dataset export")
         df, gdf = load_and_scan_data()
         generate_public_dataset(df, gdf)
         print("[INFO] Step 10 completed.")

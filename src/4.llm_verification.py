@@ -1,4 +1,4 @@
-# llm_verification.py
+﻿# llm_verification.py
 # -*- coding: utf-8 -*-
 
 import pandas as pd
@@ -26,7 +26,6 @@ from utils import safe_str
 import httpx 
 custom_client = httpx.Client(trust_env=False, verify=False)
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL, http_client=custom_client)
-# =================================================
 
 def build_taxonomy_str(taxonomy):
     s = "请严格从以下【主类】和【子类】中选择（不要创造新词）：\n"
@@ -43,8 +42,6 @@ def build_taxonomy_str(taxonomy):
 TAXONOMY_PROMPT_STR = build_taxonomy_str(LLM_TAXONOMY)
 
 def filter_data_for_llm(df):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     def is_really_empty(text):
         t = str(text).strip().lower()
@@ -69,7 +66,6 @@ def filter_data_for_llm(df):
         cond_not_processed
     ].copy()
     
-    print("[INFO] Status message emitted.")
     return candidates
 
 def generate_prompt(row):
@@ -161,16 +157,11 @@ def call_llm_api(prompt, retries=3):
     return None
 
 def main():
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
 
     geojson_path = RULE_ENGINE_OUTPUT_PATH.replace('.csv', '.geojson')
     if not os.path.exists(geojson_path):
-        print("[INFO] Status message emitted.")
         return
     
-    print("[INFO] Status message emitted.")
     df_all = gpd.read_file(geojson_path)
     if 'geometry' in df_all.columns:
         df_all = df_all.drop(columns=['geometry'])
@@ -182,7 +173,6 @@ def main():
     
     candidates = filter_data_for_llm(df_all)
     if candidates.empty:
-        print("[INFO] Status message emitted.")
         return
 
     if os.path.exists(LLM_VERIFICATION_OUTPUT):
@@ -190,14 +180,12 @@ def main():
             df_existing = pd.read_csv(LLM_VERIFICATION_OUTPUT, low_memory=False)
             processed_ids = set(df_existing.loc[df_existing['LLM_Confidence'].notna(), 'BUILDINGSTRUCTUREID'])
             candidates = candidates[~candidates['BUILDINGSTRUCTUREID'].isin(processed_ids)]
-            print("[INFO] Status message emitted.")
             df_all.set_index('BUILDINGSTRUCTUREID', inplace=True)
             df_existing.set_index('BUILDINGSTRUCTUREID', inplace=True)
             df_all.update(df_existing[new_cols])
             df_all.reset_index(inplace=True)
         except: pass
 
-    print("[INFO] Status message emitted.")
     MAX_THREADS = 15 
     updates_buffer = []
     pbar = tqdm(total=len(candidates), desc="Processing")
@@ -237,7 +225,6 @@ def main():
             t_idx = u.pop('idx')
             for k, v in u.items(): df_all.at[t_idx, k] = v
     df_all.to_csv(LLM_VERIFICATION_OUTPUT, index=False, encoding='utf-8-sig')
-    print("[INFO] Status message emitted.")
 
 import sys
 
@@ -270,6 +257,5 @@ if __name__ == "__main__":
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout
     
-    print("[INFO] Status message emitted.")
     
     main()

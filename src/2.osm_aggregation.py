@@ -1,6 +1,4 @@
-# osm_aggregation.py
-
-"""Module documentation."""
+﻿# osm_aggregation.py
 
 # -*- coding: utf-8 -*-
 import os
@@ -35,7 +33,6 @@ try:
     from fuzzywuzzy import fuzz
 except ImportError:
     fuzz = None
-    print("[INFO] Status message emitted.")
 
 from utils import (to_simplified_chinese)
 
@@ -47,7 +44,6 @@ HK80_CRS = "EPSG:2326"
 WGS84_CRS = "EPSG:4326"
 
 def format_osmid(osmid_value):
-    """Function documentation."""
     try:
         num_val = float(osmid_value)
         return f"{num_val:.0f}"
@@ -56,11 +52,9 @@ def format_osmid(osmid_value):
 
 def visualize_multi_osm_aggregation(gdf_aggregated, gdf_official_library, gdf_osm_clean, 
                                     multi_osm_buildings, num_samples=3):
-    """Function documentation."""
     if multi_osm_buildings.empty or num_samples <= 0:
         return
     
-    print("[INFO] Status message emitted.")
     
     matplotlib.use('Agg')
     
@@ -86,10 +80,8 @@ def visualize_multi_osm_aggregation(gdf_aggregated, gdf_official_library, gdf_os
         num_osm = len(osm_geoms_to_plot)
         
         print(f"\n" + "="*50)
-        print("[INFO] Status message emitted.")
         
         if num_osm == 0:
-            print("[INFO] Status message emitted.")
             continue
         
         fig, ax = plt.subplots(1, 1, figsize=(12, 12))
@@ -120,7 +112,6 @@ def visualize_multi_osm_aggregation(gdf_aggregated, gdf_official_library, gdf_os
         plt.savefig(output_path, dpi=VISUALIZATION_DPI, bbox_inches='tight')
         plt.close()
         
-        print("[INFO] Status message emitted.")
         
         if num_osm > 1:
             cols = min(num_osm, 4)
@@ -160,17 +151,12 @@ def visualize_multi_osm_aggregation(gdf_aggregated, gdf_official_library, gdf_os
             plt.savefig(faceted_path, dpi=VISUALIZATION_DPI, bbox_inches='tight')
             plt.close()
             
-            print("[INFO] Status message emitted.")
         
-        print("="*50)
 
 def visualize_islands_on_map(island_gdf, num_samples=100):
-    """Function documentation."""
     if island_gdf.empty:
-        print("[INFO] Status message emitted.")
         return
     
-    print("[INFO] Status message emitted.")
     
     samples = island_gdf.sample(min(num_samples, len(island_gdf)), random_state=42)
     
@@ -180,7 +166,6 @@ def visualize_islands_on_map(island_gdf, num_samples=100):
         centroid = samples.geometry.representative_point().unary_union.centroid
         center_lon, center_lat = transformer.transform(centroid.x, centroid.y)
     except Exception as e:
-        print("[INFO] Status message emitted.")
         center_lat, center_lon = 22.35, 114.1
     
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12, 
@@ -193,7 +178,7 @@ def visualize_islands_on_map(island_gdf, num_samples=100):
         overlay=True
     ).add_to(m)
     
-    for _, row in tqdm(samples.iterrows(), total=len(samples), desc="添加数据孤岛样本"):
+    for _, row in tqdm(samples.iterrows(), total=len(samples), desc="Adding data-island samples"):
         if row.geometry is None or row.geometry.is_empty:
             continue
         
@@ -205,10 +190,10 @@ def visualize_islands_on_map(island_gdf, num_samples=100):
                     coords.append([lat, lon])
                 
                 popup_html = f"""
-                <h4>数据孤岛样本</h4><hr>
+                <h4>Data-island Sample</h4><hr>
                 <b>BSID:</b> {row['BUILDINGSTRUCTUREID']}<br>
-                <b>面积:</b> {row.geometry.area:.2f} 平方米<br>
-                <b>类型:</b> {row.get('BUILDINGSTRUCTURETYPE', 'N/A')}
+                <b>Area:</b> {row.geometry.area:.2f} m2<br>
+                <b>Type:</b> {row.get('BUILDINGSTRUCTURETYPE', 'N/A')}
                 """
                 
                 folium.Polygon(
@@ -226,9 +211,9 @@ def visualize_islands_on_map(island_gdf, num_samples=100):
                 lon, lat = transformer.transform(row.geometry.x, row.geometry.y)
                 
                 popup_html = f"""
-                <h4>数据孤岛样本 (点)</h4><hr>
+                <h4>Data-island Sample (Point)</h4><hr>
                 <b>BSID:</b> {row['BUILDINGSTRUCTUREID']}<br>
-                <b>类型:</b> {row.get('BUILDINGSTRUCTURETYPE', 'N/A')}
+                <b>Type:</b> {row.get('BUILDINGSTRUCTURETYPE', 'N/A')}
                 """
                 
                 folium.CircleMarker(
@@ -243,25 +228,18 @@ def visualize_islands_on_map(island_gdf, num_samples=100):
                 ).add_to(m)
                 
         except Exception as e:
-            print("[INFO] Status message emitted.")
             continue
     
     m.save(ISLANDS_MAP_PATH)
-    print("[INFO] Status message emitted.")
 
 def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
-    """Function documentation."""
     if not RUN_AGGREGATION_EVALUATION:
         return
     
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     total_buildings = len(gdf_official_library)
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     if 'osmid' in gdf_aggregated.columns:
         matched_mask = gdf_aggregated['osmid'].notna()
@@ -276,11 +254,7 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
     
     unmatched_building_count = total_buildings - matched_building_count
     
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     if matched_building_count > 0 and 'osmid' in gdf_aggregated.columns:
         osm_counts_per_building = gdf_aggregated[gdf_aggregated['osmid'].notna()].groupby('BUILDINGSTRUCTUREID')['osmid'].nunique()
@@ -288,15 +262,10 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
         multi_osm_buildings = osm_counts_per_building[osm_counts_per_building > 1]
         num_multi_osm = len(multi_osm_buildings)
         
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
         if num_multi_osm > 0:
-            print("[INFO] Status message emitted.")
             print(multi_osm_buildings.describe().to_string())
             
-            print("[INFO] Status message emitted.")
             top_5 = multi_osm_buildings.sort_values(ascending=False).head(5)
             for idx, count in top_5.items():
                 building_info = gdf_official_library[
@@ -305,14 +274,11 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
                 if not building_info.empty:
                     name = building_info.iloc[0].get('BUILDINGNAMETC', 'N/A')
                     area = building_info.iloc[0].geometry.area
-                    print("[INFO] Status message emitted.")
                 else:
-                    print("[INFO] Status message emitted.")
+                    pass
     else:
-        print("[INFO] Status message emitted.")
         multi_osm_buildings = pd.Series(dtype=int)
     
-    print("[INFO] Status message emitted.")
     
     island_criteria = pd.Series(False, index=gdf_aggregated.index)
     
@@ -345,10 +311,8 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
     num_islands = len(information_islands)
     
     if total_buildings > 0:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
+        pass
     
-    print("[INFO] Status message emitted.")
     
     if 'multi_osm_buildings' in locals() and not multi_osm_buildings.empty:
         visualize_multi_osm_aggregation(
@@ -359,7 +323,7 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
             num_samples=NUM_MULTIMATCH_SAMPLES
         )
     else:
-        print("[INFO] Status message emitted.")
+        pass
     
     if not information_islands.empty:
         visualize_islands_on_map(
@@ -367,66 +331,53 @@ def aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean):
             num_samples=min(NUM_ISLAND_SAMPLES, len(information_islands))
         )
     else:
-        print("[INFO] Status message emitted.")
+        pass
     
-    print("[INFO] Status message emitted.")
     try:
         fig, axes = plt.subplots(1, 2, figsize=(15, 6))
         
-        labels = ['匹配OSM', '未匹配OSM']
+        labels = ['OSM Matched', 'OSM Unmatched']
         sizes = [matched_building_count, unmatched_building_count]
         colors = ['#66c2a5', '#fc8d62']
         
         axes[0].pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        axes[0].set_title('OSM匹配情况分布')
+        axes[0].set_title('OSM Match Distribution')
         
         if 'multi_osm_buildings' in locals() and not multi_osm_buildings.empty:
             display_data = multi_osm_buildings[multi_osm_buildings <= 20]
             if not display_data.empty:
                 axes[1].hist(display_data, bins=20, color='#8da0cb', edgecolor='black')
-                axes[1].set_xlabel('匹配的OSM要素数量')
-                axes[1].set_ylabel('建筑数量')
-                axes[1].set_title('一对多匹配分布 (≤20个OSM)')
+                axes[1].set_xlabel('Number of Matched OSM Features')
+                axes[1].set_ylabel('Building Count')
+                axes[1].set_title('One-to-Many Match Distribution (<=20 OSM)')
             else:
-                axes[1].text(0.5, 0.5, '无一对多匹配数据', ha='center', va='center')
+                axes[1].text(0.5, 0.5, 'No one-to-many match data', ha='center', va='center')
         else:
-            axes[1].text(0.5, 0.5, '无一对多匹配数据', ha='center', va='center')
+            axes[1].text(0.5, 0.5, 'No one-to-many match data', ha='center', va='center')
         
         plt.tight_layout()
         stats_path = os.path.join(OUTPUT_DIR, "aggregation_statistics.png")
         plt.savefig(stats_path, dpi=VISUALIZATION_DPI)
         plt.close()
         
-        print("[INFO] Status message emitted.")
         
     except Exception as e:
-        print("[INFO] Status message emitted.")
+        pass
     
-    print("[INFO] Status message emitted.")
 
 def debug_geometry_info(gdf, label=""):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     if not gdf.empty:
         print(f"  - CRS: {gdf.crs}")
-        print("[INFO] Status message emitted.")
         try:
             bbox = gdf.total_bounds
-            print("[INFO] Status message emitted.")
             print(f"    x: {bbox[0]:.2f} ~ {bbox[2]:.2f}")
             print(f"    y: {bbox[1]:.2f} ~ {bbox[3]:.2f}")
         except:
-            print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
+            pass
 
-def simple_geometry_validation(gdf, label="数据"):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
+def simple_geometry_validation(gdf, label="dataset"):
     
     if gdf.empty:
-        print("[INFO] Status message emitted.")
         return gdf
     
     original_count = len(gdf)
@@ -435,10 +386,8 @@ def simple_geometry_validation(gdf, label="数据"):
     invalid_count = invalid_mask.sum()
     
     if invalid_count > 0:
-        print("[INFO] Status message emitted.")
         
         def simple_repair(geom):
-            """Function documentation."""
             try:
                 if geom is None or geom.is_empty:
                     return geom
@@ -466,20 +415,15 @@ def simple_geometry_validation(gdf, label="数据"):
     still_invalid_count = still_invalid.sum()
     
     if still_invalid_count > 0:
-        print("[INFO] Status message emitted.")
+        pass
     
-    print("[INFO] Status message emitted.")
     
     return gdf
 
 def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     if gdf_overture is None or gdf_overture.empty:
-        print("[INFO] Status message emitted.")
         return gdf_osm_pois
         
-    print("[INFO] Status message emitted.")
     
     ovt_buffer = gdf_overture.copy()
     ovt_buffer['geometry'] = ovt_buffer.geometry.buffer(10)
@@ -488,7 +432,6 @@ def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
     
     duplicates_osm_idx = set()
     if fuzz is not None:
-        print("[INFO] Status message emitted.")
         for idx, row in joined.iterrows():
             name_osm = str(row.get('name_left', '')).lower()
             name_ovt = str(row.get('name_right', '')).lower()
@@ -500,14 +443,12 @@ def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
                 if row.get('amenity_left') == row.get('amenity_right') or row.get('shop_left') == row.get('shop_right'):
                     duplicates_osm_idx.add(idx)
     else:
-        print("[INFO] Status message emitted.")
         for idx, row in joined.iterrows():
             if row.get('amenity_left') == row.get('amenity_right') or row.get('shop_left') == row.get('shop_right'):
                 duplicates_osm_idx.add(idx)
     
     valid_drop_indices = [i for i in duplicates_osm_idx if i in gdf_osm_pois.index]
     gdf_osm_unique = gdf_osm_pois.drop(index=valid_drop_indices)
-    print("[INFO] Status message emitted.")
     
     if 'data_source' not in gdf_osm_unique.columns:
         gdf_osm_unique['data_source'] = 'osm'
@@ -520,66 +461,45 @@ def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
     
     gdf_fused = pd.concat([gdf_overture[common_cols_ovt], gdf_osm_unique[common_cols_osm]], ignore_index=True)
     gdf_fused = gpd.GeoDataFrame(gdf_fused, geometry='geometry', crs=gdf_osm_pois.crs)
-    print("[INFO] Status message emitted.")
     
     return gdf_fused
 
 
 
 def load_input_data():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
     try:
-        print("[INFO] Status message emitted.")
         if os.path.exists(OFFICIAL_LIBRARY_PATH):
             gdf_official_library = gpd.read_file(OFFICIAL_LIBRARY_PATH)
             
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
             
             if gdf_official_library.empty:
-                print("[INFO] Status message emitted.")
                 return None
             
             if gdf_official_library.crs is None:
-                print("[INFO] Status message emitted.")
                 gdf_official_library = gdf_official_library.set_crs(HK80_CRS)
             elif str(gdf_official_library.crs) != HK80_CRS:
-                print("[INFO] Status message emitted.")
                 gdf_official_library = gdf_official_library.to_crs(HK80_CRS)
             
-            print("[INFO] Status message emitted.")
-            gdf_official_library = simple_geometry_validation(gdf_official_library, "官方建筑库")
+            gdf_official_library = simple_geometry_validation(gdf_official_library, "official_library")
                 
         else:
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
             return None
         
-        print("[INFO] Status message emitted.")
         if os.path.exists(OSM_ALL_PATH):
             gdf_osm_all = gpd.read_file(OSM_ALL_PATH)
             
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
             print(f"     - CRS: {gdf_osm_all.crs}")
             
             if not gdf_osm_all.empty:
                 if gdf_osm_all.crs is None:
-                    print("[INFO] Status message emitted.")
                     gdf_osm_all = gdf_osm_all.set_crs(WGS84_CRS)
                 
-                print("[INFO] Status message emitted.")
                 try:
                     gdf_osm_all = gdf_osm_all.to_crs(HK80_CRS)
                 except Exception as e:
-                    print("[INFO] Status message emitted.")
-                    print("[INFO] Status message emitted.")
                     gdf_osm_all = gdf_osm_all.set_crs(HK80_CRS)
                 
-                print("[INFO] Status message emitted.")
                 gdf_osm_buildings = gdf_osm_all[
                     gdf_osm_all.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])
                 ].copy()
@@ -587,46 +507,37 @@ def load_input_data():
                     gdf_osm_all.geometry.geom_type.isin(['Point'])
                 ].copy()
                 
-                print("[INFO] Status message emitted.")
 
-                print("[INFO] Status message emitted.")
                 try:
                     if os.path.exists(OVERTURE_CLEAN_PATH):
                         gdf_overture = gpd.read_file(OVERTURE_CLEAN_PATH)
                         gdf_osm_pois = fuse_poi_datasets(gdf_osm_pois, gdf_overture)
                     else:
-                        print("[INFO] Status message emitted.")
+                        pass
                 except Exception as e:
-                    print("[INFO] Status message emitted.")
-                # =================================================================
+                    pass
 
             else:
-                print("[INFO] Status message emitted.")
                 gdf_osm_buildings = gpd.GeoDataFrame()
                 gdf_osm_pois = gpd.GeoDataFrame()
         else:
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
             return None
         
         if not gdf_official_library.empty and not gdf_osm_buildings.empty:
-            print("[INFO] Status message emitted.")
             try:
                 bounds1 = gdf_official_library.total_bounds
                 bounds2 = gdf_osm_buildings.total_bounds
                 
-                print("[INFO] Status message emitted.")
-                print("[INFO] Status message emitted.")
                 
                 overlap_x = not (bounds1[2] < bounds2[0] or bounds1[0] > bounds2[2])
                 overlap_y = not (bounds1[3] < bounds2[1] or bounds1[1] > bounds2[3])
                 
                 if overlap_x and overlap_y:
-                    print("[INFO] Status message emitted.")
+                    pass
                 else:
-                    print("[INFO] Status message emitted.")
+                    pass
             except Exception as e:
-                print("[INFO] Status message emitted.")
+                pass
         
         return {
             'gdf_official_library': gdf_official_library,
@@ -636,22 +547,18 @@ def load_input_data():
         }
         
     except Exception as e:
-        print("[INFO] Status message emitted.")
         import traceback
         traceback.print_exc()
         return None
 
 def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     try:
         from config import KEYWORDS_FILE
         with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
             KEYWORDS_CONFIG = json.load(f)
     except Exception as e:
-        raise IOError(f"错误: 无法加载关键词文件 '{KEYWORDS_FILE}': {e}")
+            raise IOError(f"Failed to load keywords file '{KEYWORDS_FILE}': {e}")
     
     KEYWORD_MAP = {}
     
@@ -666,7 +573,6 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
     
     all_kws_list = sorted([re.escape(k) for k in KEYWORD_MAP.keys() if len(k) > 1], key=len, reverse=True)
     KEYWORD_REGEX = re.compile('|'.join(all_kws_list)) if all_kws_list else None
-    print("[INFO] Status message emitted.")
     
     def classify_text_for_osm(text):
         if not text or pd.isna(text) or not KEYWORD_REGEX:
@@ -687,12 +593,10 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
             return classifications[0]
         return (None, None)
     
-    print("[INFO] Status message emitted.")
     
     gdf_osm_all = pd.concat([gdf_osm_buildings, gdf_osm_pois], ignore_index=True)
     
     if gdf_osm_all.empty:
-        print("[INFO] Status message emitted.")
         gdf_osm_clean = gpd.GeoDataFrame(
             columns=['osmid', 'name', 'building', 'amenity', 'shop', 
                      'geometry', 'osm_height', 'osm_area', 
@@ -700,7 +604,6 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
             crs=HK80_CRS
         )
         gdf_osm_clean.to_file(OSM_CLEAN_PATH, driver='GeoJSON')
-        print("[INFO] Status message emitted.")
         return gdf_osm_clean
     
     if 'id' in gdf_osm_all.columns:
@@ -708,9 +611,8 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
     elif 'osmid' not in gdf_osm_all.columns:
         gdf_osm_all['osmid'] = range(len(gdf_osm_all))
     
-    gdf_osm_all = simple_geometry_validation(gdf_osm_all, "OSM预处理")
+    gdf_osm_all = simple_geometry_validation(gdf_osm_all, "osm_preprocessed")
     
-    print("[INFO] Status message emitted.")
     if gdf_osm_all.crs is None:
         gdf_osm_all = gdf_osm_all.set_crs(HK80_CRS)
     elif str(gdf_osm_all.crs) != HK80_CRS:
@@ -722,24 +624,19 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
     
     if 'building:height' in gdf_osm_all.columns:
         gdf_osm_clean['osm_height'] = pd.to_numeric(gdf_osm_all['building:height'], errors='coerce')
-        print("[INFO] Status message emitted.")
     else:
         gdf_osm_clean['osm_height'] = np.nan
-        print("[INFO] Status message emitted.")
     
     gdf_osm_clean['osm_area'] = gdf_osm_clean.geometry.area
     
-    print("[INFO] Status message emitted.")
     if len(gdf_osm_clean) > 0:
-        tqdm.pandas(desc="OSM初步分类")
+        tqdm.pandas(desc="Initial OSM classification")
         osm_initial_classes = gdf_osm_clean.progress_apply(classify_osm_feature_for_join, axis=1)
         gdf_osm_clean['initial_main_class'] = [c[0] for c in osm_initial_classes]
         gdf_osm_clean['initial_sub_class'] = [c[1] for c in osm_initial_classes]
-        print("[INFO] Status message emitted.")
     else:
         gdf_osm_clean['initial_main_class'] = None
         gdf_osm_clean['initial_sub_class'] = None
-        print("[INFO] Status message emitted.")
     
     total_osm_features = len(gdf_osm_clean)
     if total_osm_features > 0:
@@ -747,40 +644,27 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
         num_classified = len(classified_osm)
         num_unclassified = total_osm_features - num_classified
         
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
         if not classified_osm.empty:
-            print("[INFO] Status message emitted.")
             class_counts = classified_osm['initial_main_class'].value_counts().head(10)
             print(class_counts.to_markdown())
     else:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
+        pass
     
     gdf_osm_clean.to_file(OSM_CLEAN_PATH, driver='GeoJSON')
-    print("[INFO] Status message emitted.")
     
     debug_geometry_info(gdf_osm_clean, "清理后的OSM数据")
     
     return gdf_osm_clean
 
 def spatial_aggregation(gdf_official_library, gdf_osm_clean):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
 
-    print("[INFO] Status message emitted.")
     
     if len(gdf_official_library) == 0:
-        print("[INFO] Status message emitted.")
         return gdf_official_library
     
     if len(gdf_osm_clean) == 0:
-        print("[INFO] Status message emitted.")
         gdf_aggregated = gdf_official_library.copy()
         osm_columns = ['osmid', 'name', 'building', 'amenity', 'shop', 
                       'initial_main_class', 'initial_sub_class', 'osm_height', 
@@ -792,11 +676,8 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
     debug_geometry_info(gdf_official_library, "空间聚合前的官方建筑库")
     debug_geometry_info(gdf_osm_clean, "空间聚合前的OSM数据")
     
-    print("[INFO] Status message emitted.")
     
     if str(gdf_official_library.crs) != str(gdf_osm_clean.crs):
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         gdf_osm_clean = gdf_osm_clean.to_crs(gdf_official_library.crs)
     
     try:
@@ -806,10 +687,7 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
             how="inner", 
             predicate='intersects'
         )
-        print("[INFO] Status message emitted.")
     except Exception as e:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
         batch_size = 50000
         potential_matches_list = []
@@ -819,15 +697,12 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
             try:
                 batch_matches = gpd.sjoin(batch, gdf_osm_clean, how="inner", predicate='intersects')
                 potential_matches_list.append(batch_matches)
-                print("[INFO] Status message emitted.")
             except Exception as e2:
-                print("[INFO] Status message emitted.")
+                pass
         
         if potential_matches_list:
             potential_matches = pd.concat(potential_matches_list, ignore_index=True)
-            print("[INFO] Status message emitted.")
         else:
-            print("[INFO] Status message emitted.")
             gdf_aggregated = gdf_official_library.copy()
             osm_columns = ['osmid', 'name', 'building', 'amenity', 'shop', 
                           'initial_main_class', 'initial_sub_class', 'osm_height', 
@@ -836,14 +711,11 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
                 gdf_aggregated[col] = np.nan
             return gdf_aggregated
     
-    print("[INFO] Status message emitted.")
     
     if len(potential_matches) > 0:
-        print("[INFO] Status message emitted.")
         osm_geometry_dict = {idx: row.geometry for idx, row in gdf_osm_clean.iterrows()}
         
         def calculate_overlap_ratio_safe(row):
-            """Function documentation."""
             try:
                 if 'index_right' in row and pd.notna(row['index_right']):
                     idx = int(row['index_right'])
@@ -865,24 +737,18 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
                 pass
             return 0.0
         
-        tqdm.pandas(desc="计算重叠比例")
+        tqdm.pandas(desc="Calculating overlap ratio")
         potential_matches['overlap_ratio'] = potential_matches.progress_apply(
             calculate_overlap_ratio_safe, axis=1
         )
         
         strong_matches = potential_matches[potential_matches['overlap_ratio'] >= OVERLAP_RATIO_THRESHOLD].copy()
-        print("[INFO] Status message emitted.")
     else:
         strong_matches = potential_matches.copy()
-        print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     
     if len(strong_matches) > 0:
-        print("[INFO] Status message emitted.")
         
-        # =========================================================
-        # =========================================================
         strong_matches['osm_raw_area'] = strong_matches['osm_area'].fillna(0)
         strong_matches['official_area'] = strong_matches.geometry.area
         
@@ -897,7 +763,6 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
                 return 0.1
         
         strong_matches['osm_weight_score'] = strong_matches.apply(calculate_osm_weight, axis=1)
-        # =========================================================
 
         
         matched_building_ids = strong_matches['BUILDINGSTRUCTUREID'].unique()
@@ -914,13 +779,9 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
         
         gdf_aggregated = pd.concat([strong_matches, unmatched_buildings], ignore_index=True)
         
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
         building_osm_counts = strong_matches.groupby('BUILDINGSTRUCTUREID')['osmid'].nunique()
         multi_match_count = (building_osm_counts > 1).sum()
-        print("[INFO] Status message emitted.")
     else:
         gdf_aggregated = gdf_official_library.copy()
         osm_columns = ['osmid', 'name', 'building', 'amenity', 'shop', 
@@ -929,9 +790,6 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
         for col in osm_columns:
             gdf_aggregated[col] = np.nan
     
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     
     original_ids = set(gdf_official_library['BUILDINGSTRUCTUREID'].unique())
     aggregated_ids = set(gdf_aggregated['BUILDINGSTRUCTUREID'].unique())
@@ -940,66 +798,50 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
     extra_ids = aggregated_ids - original_ids
     
     if len(missing_ids) == 0:
-        print("[INFO] Status message emitted.")
+        pass
     else:
-        print("[INFO] Status message emitted.")
+        pass
     
     if len(extra_ids) == 0:
-        print("[INFO] Status message emitted.")
+        pass
     else:
-        print("[INFO] Status message emitted.")
+        pass
     
     building_counts = gdf_aggregated['BUILDINGSTRUCTUREID'].value_counts()
     multi_match_buildings = building_counts[building_counts > 1]
     
     if len(multi_match_buildings) > 0:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
-        print("[INFO] Status message emitted.")
         for count in range(2, 11):
             num_buildings = (building_counts == count).sum()
             if num_buildings > 0:
-                print("[INFO] Status message emitted.")
+                pass
         
         if building_counts.max() > 10:
             num_extreme = (building_counts > 10).sum()
-            print("[INFO] Status message emitted.")
     else:
-        print("[INFO] Status message emitted.")
+        pass
 
 
     if 'osmid' in gdf_aggregated.columns:
         matched_count = gdf_aggregated['osmid'].notna().sum()
-        print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     try:
         gdf_aggregated.to_file(AGGREGATED_GDF_PATH, driver='GeoJSON')
-        print("[INFO] Status message emitted.")
     except Exception as e:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         try:
             csv_path = AGGREGATED_GDF_PATH.replace('.geojson', '.csv')
             df_without_geom = gdf_aggregated.drop(columns=['geometry'])
             df_without_geom.to_csv(csv_path, index=False, encoding='utf-8')
-            print("[INFO] Status message emitted.")
         except Exception as e2:
-            print("[INFO] Status message emitted.")
+            pass
     
     return gdf_aggregated
 
 def main():
-    """Function documentation."""
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
     data_dict = load_input_data()
     if data_dict is None:
-        print("[INFO] Status message emitted.")
         return False
     
     gdf_official_library = data_dict['gdf_official_library']
@@ -1016,16 +858,7 @@ def main():
     
     aggregation_evaluation(gdf_aggregated, gdf_official_library, gdf_osm_clean)
     
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     
     return True
 
@@ -1056,20 +889,16 @@ if __name__ == "__main__":
     
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout
-    print("[INFO] Status message emitted.")
 
     try:
         success = main()
         if success:
-            print("[INFO] Status message emitted.")
+            pass
         else:
-            print("[INFO] Status message emitted.")
             sys.exit(1)
     except KeyboardInterrupt:
-        print("[INFO] Status message emitted.")
         sys.exit(0)
     except Exception as e:
-        print("[INFO] Status message emitted.")
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -1,474 +1,324 @@
-# feature_engineering.py
-
-"""Module documentation."""
+﻿# 8.feature_engineering.py
+# -*- coding: utf-8 -*-
 
 import os
 import sys
 import warnings
 import json
-import re
-import pandas as pd
-import numpy as np
-import geopandas as gpd
-from tqdm.auto import tqdm
-from collections import Counter
 import pickle
 import time
 
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+from tqdm.auto import tqdm
+
 from config import (
-    MAIN_CLASSES_ML, HIGH_CONFIDENCE_SOURCES,
-    INTERMEDIATE_DIR, OUTPUT_DIR,
-    AI_CALIBRATED_OUTPUT_PATH, OFFICIAL_LIB_BASE_PATH,
-    RULE_ENGINE_OUTPUT_PATH, KEYWORDS_FILE, AGGREGATED_GDF_PATH,
-    OZP_DATA_DIR, FORCE_RECOMPUTE_FEATURES,
-    FEATURE_X_ALL_PATH, FEATURE_X_TRAIN_ML_PATH,
-    FEATURE_Y_MULTILABEL_PATH, FEATURE_TRAINING_DATA_ML_PATH,
-    FEATURE_BASE_INDEXED_PATH, FEATURE_GDF_BASE_CALIBRATED_PATH,
-    NEIGHBOR_DENSITY_RADIUS, DOMINANT_NEIGHBOR_RADIUS,
-    COMPACTNESS_EPSILON
+    MAIN_CLASSES_ML,
+    HIGH_CONFIDENCE_SOURCES,
+    INTERMEDIATE_DIR,
+    AI_CALIBRATED_OUTPUT_PATH,
+    OFFICIAL_LIB_BASE_PATH,
+    KEYWORDS_FILE,
+    FORCE_RECOMPUTE_FEATURES,
+    FEATURE_X_ALL_PATH,
+    FEATURE_X_TRAIN_ML_PATH,
+    FEATURE_Y_MULTILABEL_PATH,
+    FEATURE_TRAINING_DATA_ML_PATH,
+    FEATURE_BASE_INDEXED_PATH,
+    FEATURE_GDF_BASE_CALIBRATED_PATH,
+    NEIGHBOR_DENSITY_RADIUS,
+    COMPACTNESS_EPSILON,
 )
 
-from utils import (
-    init_keyword_tool, classify_text_by_keywords, safe_str,
-    load_and_fuse_ozp, to_simplified_chinese
-)
+from utils import init_keyword_tool
 
-if 'MAIN_CLASSES_ML' not in globals():
-    from config import MAIN_CLASSES_ML
-
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 tqdm.pandas()
 
-def load_feature_engineering_inputs():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    try:
-        # df_base = pd.read_csv(AI_CALIBRATED_OUTPUT_PATH)
 
-        print("[INFO] Status message emitted.")
-        df_base = pd.read_csv(AI_CALIBRATED_OUTPUT_PATH)
-        print("[INFO] Status message emitted.")
+def normalize_building_id(v):
+    s = str(v).strip()
+    if s.lower() in {"nan", "none", "null"}:
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
 
-        print("[INFO] Status message emitted.")
-        gdf_official_library = gpd.read_file(OFFICIAL_LIB_BASE_PATH)
-        gdf_official_library = gdf_official_library.set_crs("EPSG:2326", allow_override=True)
-        print("[INFO] Status message emitted.")
-        
-        print("[INFO] Status message emitted.")
-        df_rule_classified = pd.read_csv(AI_CALIBRATED_OUTPUT_PATH, low_memory=False)
-        print("[INFO] Status message emitted.")
-        
-        print("[INFO] Status message emitted.")
-        with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
-            KEYWORDS_CONFIG = json.load(f)
-        print("[INFO] Status message emitted.")
-        
-        return {
-            'df_base': df_base,
-            'gdf_official_library': gdf_official_library,
-            'df_rule_classified': df_rule_classified,
-            'keywords_config': KEYWORDS_CONFIG
-        }
-        
-    except FileNotFoundError as e:
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
-        print(f"  1. {AI_CALIBRATED_OUTPUT_PATH}")
-        print(f"  2. {OFFICIAL_LIB_BASE_PATH}")
-        print(f"  3. {KEYWORDS_FILE}")
+
+def normalize_main_to_ml_target(value):
+    text = str(value or "").strip()
+    if not text:
         return None
-    
-    except Exception as e:
-        print("[INFO] Status message emitted.")
-        import traceback
-        traceback.print_exc()
-        return None
+    low = text.lower()
 
-def prepare_feature_data(df_base, gdf_official_library, keyword_tool):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    gdf_base_calibrated = gdf_official_library.merge(
-        df_base.drop(columns=['geometry'], errors='ignore'), 
-        on='BUILDINGSTRUCTUREID', 
-        how='inner',
-        suffixes=('_geo', '_attr')
+    for target in MAIN_CLASSES_ML:
+        if text == str(target):
+            return target
+
+    if ("residential" in low) or ("住宅" in text):
+        return MAIN_CLASSES_ML[0]
+    if ("commercial" in low) or ("商业" in text):
+        return MAIN_CLASSES_ML[1]
+    if ("industrial" in low) or ("工业" in text):
+        return MAIN_CLASSES_ML[2]
+    return None
+
+
+def is_mixed_unknown_or_non_assessed(value):
+    text = str(value or "").strip()
+    low = text.lower()
+    return (
+        ("mixed-use" in low)
+        or ("mixed use" in low)
+        or ("混合" in text)
+        or ("unknown" in low)
+        or ("未知" in text)
+        or ("non-assessed" in low)
+        or ("non assessed" in low)
+        or ("非评估" in text)
     )
-    
-    duplicate_cols = [col for col in gdf_base_calibrated.columns if col.endswith('_geo') or col.endswith('_attr')]
+
+
+def is_high_confidence_source(source):
+    if pd.isna(source):
+        return False
+    src = str(source)
+    return ("_LLM_Corrected" in src) or (src in HIGH_CONFIDENCE_SOURCES) or ("Inherited" in src)
+
+
+def load_feature_engineering_inputs():
+    df_base = pd.read_csv(AI_CALIBRATED_OUTPUT_PATH, low_memory=False)
+    gdf_official_library = gpd.read_file(OFFICIAL_LIB_BASE_PATH)
+    if gdf_official_library.crs is None:
+        gdf_official_library = gdf_official_library.set_crs("EPSG:2326", allow_override=True)
+
+    if "BUILDINGSTRUCTUREID" in df_base.columns:
+        df_base["BUILDINGSTRUCTUREID"] = df_base["BUILDINGSTRUCTUREID"].apply(normalize_building_id)
+    if "BUILDINGSTRUCTUREID" in gdf_official_library.columns:
+        gdf_official_library["BUILDINGSTRUCTUREID"] = gdf_official_library["BUILDINGSTRUCTUREID"].apply(normalize_building_id)
+
+    with open(KEYWORDS_FILE, "r", encoding="utf-8") as f:
+        keywords_config = json.load(f)
+
+    return {
+        "df_base": df_base,
+        "gdf_official_library": gdf_official_library,
+        "keywords_config": keywords_config,
+    }
+
+
+def prepare_feature_data(df_base, gdf_official_library):
+    gdf = gdf_official_library.merge(
+        df_base.drop(columns=["geometry"], errors="ignore"),
+        on="BUILDINGSTRUCTUREID",
+        how="inner",
+        suffixes=("_geo", "_attr"),
+    )
+
+    duplicate_cols = [c for c in gdf.columns if c.endswith("_geo") or c.endswith("_attr")]
     for col in duplicate_cols:
-        if col.endswith('_geo'):
-            base_col = col.replace('_geo', '')
-            if base_col + '_attr' in gdf_base_calibrated.columns:
-                gdf_base_calibrated[base_col] = gdf_base_calibrated[base_col + '_attr']
-                gdf_base_calibrated = gdf_base_calibrated.drop(columns=[col, base_col + '_attr'])
-    
-    print("[INFO] Status message emitted.")
-    
-    # if 'OZP_ZONE_LABEL' not in gdf_base_calibrated.columns:
-    #     gdf_base_calibrated['OZP_ZONE_LABEL'] = 'Unknown'
-    
-    return gdf_base_calibrated
+        if col.endswith("_geo"):
+            base_col = col.replace("_geo", "")
+            attr_col = base_col + "_attr"
+            if attr_col in gdf.columns:
+                gdf[base_col] = gdf[attr_col]
+                gdf = gdf.drop(columns=[col, attr_col], errors="ignore")
+    return gdf
+
 
 def prepare_training_data(gdf_base_calibrated):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    # high_confidence_mask = gdf_base_calibrated['Classification_Source'].isin(HIGH_CONFIDENCE_SOURCES)
-    
-    def is_high_confidence(source):
-        if pd.isna(source): return False
-        source = str(source)
-        if '_LLM_Corrected' in source: return True
-        if source in HIGH_CONFIDENCE_SOURCES: return True
-        if 'Inherited' in source: return True
-        return False
+    training_candidates = gdf_base_calibrated[gdf_base_calibrated["Classification_Source"].apply(is_high_confidence_source)].copy()
+    training_candidates = training_candidates[~training_candidates["Final_Main_Class"].apply(is_mixed_unknown_or_non_assessed)].copy()
+    training_candidates["_ml_main"] = training_candidates["Final_Main_Class"].apply(normalize_main_to_ml_target)
+    training_data = training_candidates[training_candidates["_ml_main"].notna()].copy()
 
-    high_confidence_mask = gdf_base_calibrated['Classification_Source'].apply(is_high_confidence)
-    training_candidates = gdf_base_calibrated[high_confidence_mask].copy()
-    
-    print("[INFO] Status message emitted.")
-    
-    non_mixed_mask = ~training_candidates['Final_Main_Class'].isin(['混合用途', '未知类别', '非评估类别'])
-    training_data = training_candidates[non_mixed_mask].copy()
-    
-    valid_class_mask = training_data['Final_Main_Class'].isin(MAIN_CLASSES_ML)
-    training_data = training_data[valid_class_mask].copy()
-    
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    
-    print("[INFO] Status message emitted.")
     for main_class in MAIN_CLASSES_ML:
-        training_data[f'is_{main_class}'] = (training_data['Final_Main_Class'] == main_class).astype(int)
-    
-    print("[INFO] Status message emitted.")
-    for main_class in MAIN_CLASSES_ML:
-        count = training_data[f'is_{main_class}'].sum()
-        print("[INFO] Status message emitted.")
-    
+        training_data[f"is_{main_class}"] = (training_data["_ml_main"] == main_class).astype(int)
+
+    training_data.drop(columns=["_ml_main"], inplace=True, errors="ignore")
     return training_data
 
 
+def dominant_neighbor_code(main_class_value):
+    mc = normalize_main_to_ml_target(main_class_value)
+    if mc is None:
+        if is_mixed_unknown_or_non_assessed(main_class_value):
+            text = str(main_class_value or "").lower()
+            if ("mixed-use" in text) or ("mixed use" in text) or ("混合" in str(main_class_value)):
+                return 5
+        return -1
+    if mc == MAIN_CLASSES_ML[0]:
+        return 0
+    if mc == MAIN_CLASSES_ML[1]:
+        return 1
+    if mc == MAIN_CLASSES_ML[2]:
+        return 2
+    return -1
+
+
 def compute_advanced_features(gdf_base_calibrated, training_data_ml):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    start_time = time.time()
-    
-    if 'Classification_Stage' in gdf_base_calibrated.columns:
-        feature_base = gdf_base_calibrated[gdf_base_calibrated['Classification_Stage'] == '待评估'].copy()
-    else:
-        feature_base = gdf_base_calibrated.copy()
-    
-    print("[INFO] Status message emitted.")
-    
-    print("[INFO] Status message emitted.")
-    feature_base['area'] = feature_base.geometry.area
-    feature_base['perimeter'] = feature_base.geometry.length
-    
-    from config import COMPACTNESS_EPSILON
-    feature_base['compactness'] = (4 * np.pi * feature_base.area) / ((feature_base.perimeter ** 2) + COMPACTNESS_EPSILON)
-    
+    feature_base = gdf_base_calibrated.copy()
+    if "Classification_Stage" in feature_base.columns:
+        stage = feature_base["Classification_Stage"].astype(str)
+        mask = stage.str.contains("待评估|to evaluate|unknown", case=False, regex=True, na=False)
+        if mask.any():
+            feature_base = feature_base[mask].copy()
+
+    feature_base["area"] = feature_base.geometry.area
+    feature_base["perimeter"] = feature_base.geometry.length
+    feature_base["compactness"] = (4 * np.pi * feature_base["area"]) / ((feature_base["perimeter"] ** 2) + COMPACTNESS_EPSILON)
+
     centroids = feature_base.geometry.representative_point()
-    feature_base['centroid_x'], feature_base['centroid_y'] = centroids.x, centroids.y
-    
-    feature_base['OZP_ZONE_LABEL'] = feature_base.get('OZP_ZONE_LABEL', pd.Series(['Unknown']*len(feature_base))).fillna('Unknown')
-    ozp_labels, ozp_uniques = pd.factorize(feature_base['OZP_ZONE_LABEL'])
-    feature_base['ozp_code'] = ozp_labels
-    
-    feature_base['Estimated_Height'] = pd.to_numeric(feature_base.get('Estimated_Height', 15.0), errors='coerce').fillna(15.0)
-    
-    print("[INFO] Status message emitted.")
-    
-    print("[INFO] Status message emitted.")
-    
-    from config import NEIGHBOR_DENSITY_RADIUS, DOMINANT_NEIGHBOR_RADIUS
-    
-    gdf_all_for_neighbors = gdf_base_calibrated.set_index('BUILDINGSTRUCTUREID')
-    feature_base_indexed = feature_base.set_index('BUILDINGSTRUCTUREID')
-    
-    print("[INFO] Status message emitted.")
+    feature_base["centroid_x"] = centroids.x
+    feature_base["centroid_y"] = centroids.y
+
+    feature_base["OZP_ZONE_LABEL"] = feature_base.get("OZP_ZONE_LABEL", pd.Series(["Unknown"] * len(feature_base))).fillna("Unknown")
+    feature_base["ozp_code"] = pd.factorize(feature_base["OZP_ZONE_LABEL"])[0]
+    feature_base["Estimated_Height"] = pd.to_numeric(feature_base.get("Estimated_Height", 15.0), errors="coerce").fillna(15.0)
+
+    gdf_all = gdf_base_calibrated.set_index("BUILDINGSTRUCTUREID")
+    feature_base_indexed = feature_base.set_index("BUILDINGSTRUCTUREID")
+
     buffered_geoms = feature_base_indexed.geometry.buffer(NEIGHBOR_DENSITY_RADIUS)
-    
     neighbor_counts = []
-    for geom in tqdm(buffered_geoms, desc="计算邻居密度", total=len(buffered_geoms)):
-        possible_matches_index = list(gdf_all_for_neighbors.sindex.query(geom, predicate='intersects'))
-        neighbor_counts.append(len(possible_matches_index) - 1)
-    
-    feature_base_indexed['neighbor_density_50m'] = neighbor_counts
-    
-    print("[INFO] Status message emitted.")
-    known_neighbors = gdf_all_for_neighbors[
-        ~gdf_all_for_neighbors['Final_Main_Class'].isin(['未知类别', '非评估类别'])
-    ].copy()
-    
-    class_map = {
-        '住宅类别': 0, 
-        '商业类别': 1, 
-        '工业类别': 2, 
-        '社会服务类别': 3,
-        '公共事业类别': 4,
-        '混合用途': 5,
-        '非评估类别': -1,
-        '未知类别': -1
-    }
-    
+    for geom in tqdm(buffered_geoms, desc="Computing neighbor density", total=len(buffered_geoms)):
+        idx = list(gdf_all.sindex.query(geom, predicate="intersects"))
+        neighbor_counts.append(max(0, len(idx) - 1))
+    feature_base_indexed["neighbor_density_50m"] = neighbor_counts
+
+    known_neighbors = gdf_all[~gdf_all["Final_Main_Class"].apply(is_mixed_unknown_or_non_assessed)].copy()
+
     def get_dominant_neighbor_class(geom):
-        buffer_geom = geom.buffer(100)
-        
-        possible_matches_index = list(known_neighbors.sindex.query(buffer_geom, predicate='intersects'))
-        
-        if not possible_matches_index:
+        buf = geom.buffer(100)
+        idx = list(known_neighbors.sindex.query(buf, predicate="intersects"))
+        if not idx:
             return -1
-        
-        possible_neighbors = known_neighbors.iloc[possible_matches_index]
-        actual_neighbors = possible_neighbors[possible_neighbors.geometry.intersects(buffer_geom)]
-        
-        if actual_neighbors.empty:
+        cand = known_neighbors.iloc[idx]
+        cand = cand[cand.geometry.intersects(buf)]
+        if cand.empty:
             return -1
-        
-        dominant_class = actual_neighbors['Final_Main_Class'].mode()
-        
-        if dominant_class.empty:
+        mode_val = cand["Final_Main_Class"].mode()
+        if mode_val.empty:
             return -1
-        
-        return class_map.get(dominant_class.iloc[0], -1)
-    
-    dominant_classes = []
-    for geom in tqdm(feature_base_indexed.geometry, desc="计算主导邻居类别", total=len(feature_base_indexed)):
-        dominant_classes.append(get_dominant_neighbor_class(geom))
-    
-    feature_base_indexed['dominant_neighbor_class_100m'] = dominant_classes
-    
+        return dominant_neighbor_code(mode_val.iloc[0])
+
+    dominant = []
+    for geom in tqdm(feature_base_indexed.geometry, desc="Computing dominant neighbor class", total=len(feature_base_indexed)):
+        dominant.append(get_dominant_neighbor_class(geom))
+    feature_base_indexed["dominant_neighbor_class_100m"] = dominant
+
     feature_columns = [
-        'area', 'perimeter', 'compactness', 'centroid_x', 'centroid_y', 'ozp_code',
-        'neighbor_density_50m', 'dominant_neighbor_class_100m', 'Estimated_Height'
+        "area",
+        "perimeter",
+        "compactness",
+        "centroid_x",
+        "centroid_y",
+        "ozp_code",
+        "neighbor_density_50m",
+        "dominant_neighbor_class_100m",
+        "Estimated_Height",
     ]
-    
-    missing_cols = [col for col in feature_columns if col not in feature_base_indexed.columns]
-    if missing_cols:
-        print("[INFO] Status message emitted.")
-        for col in missing_cols:
+    for col in feature_columns:
+        if col not in feature_base_indexed.columns:
             feature_base_indexed[col] = 0
-    
+
     X_all = feature_base_indexed[feature_columns]
-    
-    y_multilabel = training_data_ml.set_index('BUILDINGSTRUCTUREID')[[f'is_{c}' for c in MAIN_CLASSES_ML]]
+    target_cols = [f"is_{c}" for c in MAIN_CLASSES_ML]
+    for col in target_cols:
+        if col not in training_data_ml.columns:
+            training_data_ml[col] = 0
+    y_multilabel = training_data_ml.set_index("BUILDINGSTRUCTUREID")[target_cols]
     X_train_ml = X_all.reindex(y_multilabel.index)
-    
-    common_index = X_train_ml.index.intersection(y_multilabel.index)
-    X_train_ml = X_train_ml.loc[common_index]
-    y_multilabel = y_multilabel.loc[common_index]
-    
-    elapsed_time = time.time() - start_time
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    
+
+    common_idx = X_train_ml.index.intersection(y_multilabel.index)
+    X_train_ml = X_train_ml.loc[common_idx]
+    y_multilabel = y_multilabel.loc[common_idx]
+
     return {
-        'X_all': X_all,
-        'X_train_ml': X_train_ml,
-        'y_multilabel': y_multilabel,
-        'feature_base_indexed': feature_base_indexed,
-        'training_data_ml': training_data_ml,
-        'gdf_base_calibrated': gdf_base_calibrated
+        "X_all": X_all,
+        "X_train_ml": X_train_ml,
+        "y_multilabel": y_multilabel,
+        "feature_base_indexed": feature_base_indexed,
+        "training_data_ml": training_data_ml,
+        "gdf_base_calibrated": gdf_base_calibrated,
     }
 
-def save_feature_engineering_results(results_dict):
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    try:
-        with open(FEATURE_X_ALL_PATH, 'wb') as f:
-            pickle.dump(results_dict['X_all'], f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_X_TRAIN_ML_PATH, 'wb') as f:
-            pickle.dump(results_dict['X_train_ml'], f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_Y_MULTILABEL_PATH, 'wb') as f:
-            pickle.dump(results_dict['y_multilabel'], f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_TRAINING_DATA_ML_PATH, 'wb') as f:
-            pickle.dump(results_dict['training_data_ml'], f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_BASE_INDEXED_PATH, 'wb') as f:
-            pickle.dump(results_dict['feature_base_indexed'], f)
-        print("[INFO] Status message emitted.")
-        
-        results_dict['gdf_base_calibrated'].to_file(FEATURE_GDF_BASE_CALIBRATED_PATH, driver='GeoJSON')
-        print("[INFO] Status message emitted.")
-        
-        feature_metadata = {
-            'feature_columns': list(results_dict['X_all'].columns),
-            'main_classes': MAIN_CLASSES_ML,
-            'num_samples': len(results_dict['X_all']),
-            'num_training_samples': len(results_dict['X_train_ml']),
-            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        metadata_path = os.path.join(INTERMEDIATE_DIR, "feature_metadata.json")
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(feature_metadata, f, indent=2, ensure_ascii=False)
-        print("[INFO] Status message emitted.")
-        
-        return True
-        
-    except Exception as e:
-        print("[INFO] Status message emitted.")
-        import traceback
-        traceback.print_exc()
-        return False
+
+def save_feature_engineering_results(results):
+    with open(FEATURE_X_ALL_PATH, "wb") as f:
+        pickle.dump(results["X_all"], f)
+    with open(FEATURE_X_TRAIN_ML_PATH, "wb") as f:
+        pickle.dump(results["X_train_ml"], f)
+    with open(FEATURE_Y_MULTILABEL_PATH, "wb") as f:
+        pickle.dump(results["y_multilabel"], f)
+    with open(FEATURE_TRAINING_DATA_ML_PATH, "wb") as f:
+        pickle.dump(results["training_data_ml"], f)
+    with open(FEATURE_BASE_INDEXED_PATH, "wb") as f:
+        pickle.dump(results["feature_base_indexed"], f)
+
+    results["gdf_base_calibrated"].to_file(FEATURE_GDF_BASE_CALIBRATED_PATH, driver="GeoJSON")
+
+    metadata = {
+        "feature_columns": list(results["X_all"].columns),
+        "main_classes": MAIN_CLASSES_ML,
+        "num_samples": len(results["X_all"]),
+        "num_training_samples": len(results["X_train_ml"]),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    metadata_path = os.path.join(INTERMEDIATE_DIR, "feature_metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    return True
+
 
 def load_feature_engineering_results():
-    """Function documentation."""
-    print("[INFO] Status message emitted.")
-    
-    try:
-        required_files = [
-            FEATURE_X_ALL_PATH,
-            FEATURE_X_TRAIN_ML_PATH,
-            FEATURE_Y_MULTILABEL_PATH,
-            FEATURE_TRAINING_DATA_ML_PATH,
-            FEATURE_BASE_INDEXED_PATH,
-            FEATURE_GDF_BASE_CALIBRATED_PATH
-        ]
-        
-        for file_path in required_files:
-            if not os.path.exists(file_path):
-                print("[INFO] Status message emitted.")
-                return None
-        
-        with open(FEATURE_X_ALL_PATH, 'rb') as f:
-            X_all = pickle.load(f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_X_TRAIN_ML_PATH, 'rb') as f:
-            X_train_ml = pickle.load(f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_Y_MULTILABEL_PATH, 'rb') as f:
-            y_multilabel = pickle.load(f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_TRAINING_DATA_ML_PATH, 'rb') as f:
-            training_data_ml = pickle.load(f)
-        print("[INFO] Status message emitted.")
-        
-        with open(FEATURE_BASE_INDEXED_PATH, 'rb') as f:
-            feature_base_indexed = pickle.load(f)
-        print("[INFO] Status message emitted.")
-        
-        gdf_base_calibrated = gpd.read_file(FEATURE_GDF_BASE_CALIBRATED_PATH)
-        print("[INFO] Status message emitted.")
-        
-        metadata_path = os.path.join(INTERMEDIATE_DIR, "feature_metadata.json")
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r', encoding='utf-8') as f:
-                feature_metadata = json.load(f)
-            print("[INFO] Status message emitted.")
-        else:
-            feature_metadata = {}
-        
-        return {
-            'X_all': X_all,
-            'X_train_ml': X_train_ml,
-            'y_multilabel': y_multilabel,
-            'feature_base_indexed': feature_base_indexed,
-            'training_data_ml': training_data_ml,
-            'gdf_base_calibrated': gdf_base_calibrated,
-            'feature_metadata': feature_metadata
-        }
-        
-    except Exception as e:
-        print("[INFO] Status message emitted.")
-        import traceback
-        traceback.print_exc()
+    required = [
+        FEATURE_X_ALL_PATH,
+        FEATURE_X_TRAIN_ML_PATH,
+        FEATURE_Y_MULTILABEL_PATH,
+        FEATURE_TRAINING_DATA_ML_PATH,
+        FEATURE_BASE_INDEXED_PATH,
+        FEATURE_GDF_BASE_CALIBRATED_PATH,
+    ]
+    if any(not os.path.exists(p) for p in required):
         return None
+    with open(FEATURE_X_ALL_PATH, "rb") as f:
+        X_all = pickle.load(f)
+    with open(FEATURE_X_TRAIN_ML_PATH, "rb") as f:
+        X_train_ml = pickle.load(f)
+    with open(FEATURE_Y_MULTILABEL_PATH, "rb") as f:
+        y_multilabel = pickle.load(f)
+    with open(FEATURE_TRAINING_DATA_ML_PATH, "rb") as f:
+        training_data_ml = pickle.load(f)
+    with open(FEATURE_BASE_INDEXED_PATH, "rb") as f:
+        feature_base_indexed = pickle.load(f)
+    gdf_base_calibrated = gpd.read_file(FEATURE_GDF_BASE_CALIBRATED_PATH)
+    return {
+        "X_all": X_all,
+        "X_train_ml": X_train_ml,
+        "y_multilabel": y_multilabel,
+        "feature_base_indexed": feature_base_indexed,
+        "training_data_ml": training_data_ml,
+        "gdf_base_calibrated": gdf_base_calibrated,
+    }
+
 
 def main():
-    """Function documentation."""
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
     if not FORCE_RECOMPUTE_FEATURES:
-        feature_results = load_feature_engineering_results()
-        if feature_results is not None:
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
-            print("[INFO] Status message emitted.")
-            return feature_results
-        else:
-            print("[INFO] Status message emitted.")
-    
-    data_dict = load_feature_engineering_inputs()
-    if data_dict is None:
-        print("[INFO] Status message emitted.")
-        return None
-    
-    df_base = data_dict['df_base']
-    gdf_official_library = data_dict['gdf_official_library']
-    df_rule_classified = data_dict['df_rule_classified']
-    keywords_config = data_dict['keywords_config']
-    
-    keyword_tool = init_keyword_tool()
-    
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
-    gdf_base_calibrated = prepare_feature_data(df_base, gdf_official_library, keyword_tool)
-    
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
+        cached = load_feature_engineering_results()
+        if cached is not None:
+            return cached
+
+    data = load_feature_engineering_inputs()
+    gdf_base_calibrated = prepare_feature_data(data["df_base"], data["gdf_official_library"])
     training_data_ml = prepare_training_data(gdf_base_calibrated)
-    
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
     feature_results = compute_advanced_features(gdf_base_calibrated, training_data_ml)
-    
-    feature_results['df_rule_classified'] = df_rule_classified
-    feature_results['keyword_tool'] = keyword_tool
-    
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
-    if save_feature_engineering_results(feature_results):
-        print("[INFO] Status message emitted.")
-    else:
-        print("[INFO] Status message emitted.")
-    
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    
-    return feature_results
+    feature_results["keyword_tool"] = init_keyword_tool()
+
+    ok = save_feature_engineering_results(feature_results)
+    return feature_results if ok else None
+
 
 class Logger(object):
     def __init__(self, filename="Default.log"):
@@ -476,43 +326,34 @@ class Logger(object):
         self.log = open(filename, "w", encoding="utf-8")
 
     def write(self, message):
-        self.terminal.write(message) 
-        if '\r' not in message:
+        self.terminal.write(message)
+        if "\r" not in message:
             self.log.write(message)
             self.log.flush()
 
     def flush(self):
         self.terminal.flush()
         self.log.flush()
-        
+
     def isatty(self):
         return True
+
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
     log_dir = os.path.join(os.path.dirname(base_dir), "log")
     os.makedirs(log_dir, exist_ok=True)
-    
-    script_name = os.path.basename(__file__).replace(".py", ".txt")
-    log_file_path = os.path.join(log_dir, script_name)
-    
+    log_file_path = os.path.join(log_dir, "8.feature_engineering.txt")
     sys.stdout = Logger(log_file_path)
-    sys.stderr = sys.stdout 
-    
-    print("[INFO] Status message emitted.")
-    
+    sys.stderr = sys.stdout
+
     try:
-        success = main()
-        if success:
-            print("[INFO] Status message emitted.")
-        else:
-            print("[INFO] Status message emitted.")
+        result = main()
+        if result is None:
             sys.exit(1)
     except KeyboardInterrupt:
-        print("[INFO] Status message emitted.")
         sys.exit(0)
-    except Exception as e:
-        print("[INFO] Status message emitted.")
+    except Exception:
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -1,4 +1,4 @@
-# 5.evaluation_and_merge.py
+﻿# 5.evaluation_and_merge.py
 # -*- coding: utf-8 -*-
 
 import pandas as pd
@@ -42,7 +42,6 @@ def get_main_class_of_sub(sub_class):
     return REVERSE_TAXONOMY.get(clean_sub, '未知类别')
 
 def apply_merge_logic(row):
-    """Function documentation."""
     rule_main = str(row.get('Final_Main_Class', '未知类别'))
     rule_sub = str(row.get('Final_Sub_Class', '未知类别'))
     rule_source = str(row.get('Classification_Source', 'Unknown'))
@@ -83,7 +82,6 @@ def apply_merge_logic(row):
         if llm_main in ['住宅类别', '商业类别', '工业类别', '非评估类别']:
             protected_source = f"{rule_source} (LLM Override Rejected - Bottom Shop Protected)"
             return pd.Series([rule_main, rule_sub, protected_source, rule_main_prop, rule_sub_prop, False])
-    # ==============================================================
 
     new_source = f"LLM_Verified (Conf: {llm_conf:.2f})"
     is_llm_overridden = True
@@ -118,18 +116,12 @@ def apply_merge_logic(row):
 
 
 def main():
-    print("="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
     
     if not os.path.exists(LLM_VERIFICATION_OUTPUT):
-        print("[INFO] Status message emitted.")
         return
         
-    print("[INFO] Status message emitted.")
     df_llm = pd.read_csv(LLM_VERIFICATION_OUTPUT, low_memory=False)
     
-    print("[INFO] Status message emitted.")
     tqdm.pandas(desc="Merging")
     merge_results = df_llm.progress_apply(apply_merge_logic, axis=1)
     
@@ -137,9 +129,7 @@ def main():
             'Merged_Main_Proportions', 'Merged_Sub_Proportions', 'Is_LLM_Overridden']] = merge_results
             
     overridden_count = df_llm['Is_LLM_Overridden'].sum()
-    print("[INFO] Status message emitted.")
     
-    print("[INFO] Status message emitted.")
     df_llm['Final_Main_Class'] = df_llm['Merged_Main_Class']
     df_llm['Final_Sub_Class'] = df_llm['Merged_Sub_Class']
     df_llm['Classification_Source'] = df_llm['Merged_Source']
@@ -154,7 +144,6 @@ def main():
     ]
     df_final_csv = df_llm.drop(columns=[c for c in cols_to_drop if c in df_llm.columns], errors='ignore')
     
-    print("[INFO] Status message emitted.")
     if os.path.exists(RULE_GEOJSON_BASE):
         gdf_base = gpd.read_file(RULE_GEOJSON_BASE)
         gdf_base = gdf_base[['BUILDINGSTRUCTUREID', 'geometry']]
@@ -167,28 +156,16 @@ def main():
                     lambda x: "" if pd.isna(x) or str(x).lower() == 'nan' else str(x)
                 )
                 
-        print("[INFO] Status message emitted.")
         gdf_final.to_file(FINAL_GEOJSON_PATH, driver='GeoJSON')
     else:
-        print("[INFO] Status message emitted.")
+        pass
 
-    print("[INFO] Status message emitted.")
     df_final_csv.to_csv(FINAL_CSV_PATH, index=False, encoding='utf-8-sig')
     
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
-    print("[INFO] Status message emitted.")
     print(df_final_csv['Final_Main_Class'].value_counts().to_markdown())
-    print("[INFO] Status message emitted.")
     print(df_final_csv['Final_Sub_Class'].value_counts().head(10).to_markdown())
-    print("[INFO] Status message emitted.")
     print(df_final_csv['Classification_Source'].apply(lambda x: 'LLM_Verified' if 'LLM_Verified' in str(x) else x).value_counts().head(5).to_markdown())
     
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("="*60)
 
 class Logger(object):
     def __init__(self, filename="Default.log"):
@@ -217,5 +194,4 @@ if __name__ == "__main__":
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout
     
-    print("[INFO] Status message emitted.")
     main()

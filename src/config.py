@@ -4,36 +4,19 @@
 """Module documentation."""
 import os
 import json
-import builtins
-import re
-
-_ORIGINAL_PRINT = builtins.print
-_SUPPRESSED_PLACEHOLDER_MESSAGES = {"[INFO] Status message emitted."}
-_SEPARATOR_LINE_PATTERN = re.compile(r"^[=\-]{8,}$")
-
-
-def _filtered_print(*args, **kwargs):
-    if len(args) == 1 and isinstance(args[0], str):
-        text = args[0].strip()
-        if text in _SUPPRESSED_PLACEHOLDER_MESSAGES:
-            return
-        if _SEPARATOR_LINE_PATTERN.fullmatch(text):
-            return
-    return _ORIGINAL_PRINT(*args, **kwargs)
-
-
-if os.environ.get("HKBFETD_ENABLE_PLACEHOLDER_LOGS", "0") != "1":
-    builtins.print = _filtered_print
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 INTERMEDIATE_DIR = os.path.join(BASE_DIR, "intermediate_files")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+LOG_DIR = os.path.join(BASE_DIR, "log")
 CTL_DIR = os.path.join(BASE_DIR, "ctl")
-VERIFICATION_DIR = os.path.join(OUTPUT_DIR, "Validation_Materials")
+VERIFICATION_DIR = os.path.join(INTERMEDIATE_DIR, "validation_materials")
+QUALITY_CHECK_DIR = os.path.join(INTERMEDIATE_DIR, "quality_checks")
+QUALITY_CHECK_HTML_DIR = os.path.join(QUALITY_CHECK_DIR, "html_maps")
 
-for dir_path in [DATA_DIR, INTERMEDIATE_DIR, OUTPUT_DIR, CTL_DIR, VERIFICATION_DIR]:
+for dir_path in [DATA_DIR, INTERMEDIATE_DIR, OUTPUT_DIR, LOG_DIR, CTL_DIR, VERIFICATION_DIR, QUALITY_CHECK_DIR, QUALITY_CHECK_HTML_DIR]:
     if not os.path.exists(dir_path):
         os.makedirs(dir_path, exist_ok=True)
 
@@ -65,6 +48,7 @@ OZP_DATA_DIR = os.path.join(DATA_DIR, "OZP_Zones")
 
 KEYWORDS_FILE = os.path.join(CTL_DIR, "keywords.json")
 LLM_TAXONOMY_FILE = os.path.join(CTL_DIR, "llm_taxonomy.json")
+STEP4_LLM_PROMPT_PATH = os.path.join(CTL_DIR, "step4_llm_verification_prompt.txt")
 
 OVERTURE_PARQUET_FILE_PATH = os.path.join(DATA_DIR, "overture", "places.parquet")
 OVERTURE_CLEAN_PATH = os.path.join(INTERMEDIATE_DIR, "step1_overture_places_clean.geojson")
@@ -96,17 +80,24 @@ RULE_ENGINE_INTERMEDIATE = os.path.join(INTERMEDIATE_DIR, "step3_rule_engine_int
 CONTEXTILY_CACHE_DIR = os.path.join(INTERMEDIATE_DIR, "contextily_cache")
 
 AI_DECISIONS_LOG_PATH = os.path.join(OUTPUT_DIR, "step6_ai_decisions_log.csv")
-ANATOMY_MAP_PATH = os.path.join(OUTPUT_DIR, "anatomy_map_telford_gardens.html")
-UNMATCHED_BD_MAP_PATH = os.path.join(OUTPUT_DIR, "investigation_map_unmatched_bd.html")
-FOOTPRINT_DISTRIBUTION_PATH = os.path.join(OUTPUT_DIR, "footprint_distribution.png")
+ANATOMY_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step1_anatomy_map_telford_gardens.html")
+UNMATCHED_BD_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step1_investigation_map_unmatched_bd.html")
+FOOTPRINT_DISTRIBUTION_PATH = os.path.join(QUALITY_CHECK_DIR, "step1_footprint_distribution.png")
 RULE_ENGINE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step3_rule_engine_classification.csv")
+RULE_ENGINE_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step3_rule_engine_classification.geojson")
 AI_CALIBRATED_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step7_ai_calibrated_classification.csv")
+AI_CALIBRATED_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step7_ai_calibrated_classification.geojson")
 ML_FINAL_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step9_ml_calibrated_classification.csv")
+ML_FINAL_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step9_ml_calibrated_classification.geojson")
 STEP5_MERGED_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step5_merged_classification.csv")
-UNKNOWN_MAP_PATH = os.path.join(OUTPUT_DIR, "rule_engine_unknowns_map.html")
-ISLANDS_MAP_PATH = os.path.join(OUTPUT_DIR, "information_islands_map.html")
-MULTI_OSM_VIS_PATH = os.path.join(OUTPUT_DIR, "multi_osm_aggregation_bsid_{}.png")
-MULTI_OSM_FACETED_PATH = os.path.join(OUTPUT_DIR, "multi_osm_faceted_bsid_{}.png")
+STEP5_MERGED_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step5_merged_classification.geojson")
+PUBLIC_DATASET_CSV_PATH = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1.csv")
+PUBLIC_DATASET_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1.geojson")
+UNKNOWN_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step3_rule_engine_unknowns_map.html")
+ISLANDS_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step2_information_islands_map.html")
+AGGREGATION_STATISTICS_PATH = os.path.join(QUALITY_CHECK_DIR, "step2_aggregation_statistics.png")
+MULTI_OSM_VIS_PATH = os.path.join(QUALITY_CHECK_DIR, "step2_multi_osm_aggregation_bsid_{}.png")
+MULTI_OSM_FACETED_PATH = os.path.join(QUALITY_CHECK_DIR, "step2_multi_osm_faceted_bsid_{}.png")
 
 TARGET_LON = 114.2125066
 TARGET_LAT = 22.32440032
@@ -183,20 +174,21 @@ LLM_VERIFICATION_OUTPUT = os.path.join(OUTPUT_DIR, "step4_llm_verified_classific
 LLM_MODEL_NAME = "qwen2.5:3b"
 LLM_CONFIDENCE_THRESHOLD = 0.7
 BATCH_SAVE_INTERVAL = 100
+AI_DECISION_SAVE_INTERVAL = 5
 
 # Cloud API settings (centralized)
 # Recommended: provide via environment variables instead of hard-coding secrets.
 # - HKBFETD_BASE_URL
 # - HKBFETD_API_KEY
 # - HKBFETD_CLOUD_MODEL_NAME
-BASE_URL = os.getenv("HKBFETD_BASE_URL", "https://api.yourcloudprovider.com/v1")
-API_KEY = os.getenv("HKBFETD_API_KEY", "")
+BASE_URL = os.getenv("HKBFETD_BASE_URL", "https://api.zzz-api.top/v1")
+API_KEY = os.getenv("HKBFETD_API_KEY", "sk-zk23b4b8e962c041ca80018b8eb24815bc869b80a1bd6aab")
 CLOUD_MODEL_NAME = os.getenv("HKBFETD_CLOUD_MODEL_NAME", "hunyuan-standard-256k")
 
 # Geometry arbitration (vision) API settings
 # - HKBFETD_VISION_API_KEY
 # - HKBFETD_VISION_CLOUD_MODEL_NAME
-VISION_API_KEY = os.getenv("HKBFETD_VISION_API_KEY", "")
+VISION_API_KEY = os.getenv("HKBFETD_VISION_API_KEY", "sk-zk23b4b8e962c041ca80018b8eb24815bc869b80a1bd6aab")
 VISION_CLOUD_MODEL_NAME = os.getenv("HKBFETD_VISION_CLOUD_MODEL_NAME", "hunyuan-turbos-vision")
 
 def load_llm_taxonomy(file_path=LLM_TAXONOMY_FILE):

@@ -1,4 +1,4 @@
-# 9.ml_classification.py
+﻿# 9.ml_classification.py
 # -*- coding: utf-8 -*-
 
 import os
@@ -30,6 +30,142 @@ from utils import init_keyword_tool, classify_text_by_keywords, safe_str, to_sim
 
 warnings.filterwarnings('ignore')
 tqdm.pandas()
+
+def normalize_building_id(v):
+    s = str(v).strip()
+    if s.lower() in {"nan", "none", "null"}:
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
+def canonicalize_main_label(value):
+    text = str(value or "").strip()
+    low = text.lower()
+    if not text:
+        return "Unknown_未知类别"
+    if ("residential" in low) or ("住宅" in text):
+        return "Residential_住宅类别"
+    if ("commercial" in low) or ("商业" in text):
+        return "Commercial_商业类别"
+    if ("industrial" in low) or ("工业" in text):
+        return "Industrial_工业类别"
+    if ("mixed-use" in low) or ("mixed use" in low) or ("混合" in text):
+        return "Mixed-use_混合用途"
+    if ("non-assessed" in low) or ("non assessed" in low) or ("非评估" in text):
+        return "Non-assessed_非评估类别"
+    if ("unknown" in low) or ("未知" in text):
+        return "Unknown_未知类别"
+    return text
+
+def normalize_bilingual_sub_label(value):
+    s = str(value or "").strip()
+    if not s:
+        return s
+    if "_" in s:
+        left, right = s.split("_", 1)
+        if re.search(r"[A-Za-z]", left) and re.search(r"[\u4e00-\u9fff]", right):
+            return f"{left.strip()}_{right.strip()}"
+
+    m = re.match(r"^\s*([^()（）]+?)\s*[（(]\s*([^()（）]+?)\s*[)）]\s*$", s)
+    if m:
+        a = m.group(1).strip()
+        b = m.group(2).strip()
+        a_has_zh = bool(re.search(r"[\u4e00-\u9fff]", a))
+        b_has_en = bool(re.search(r"[A-Za-z]", b))
+        a_has_en = bool(re.search(r"[A-Za-z]", a))
+        b_has_zh = bool(re.search(r"[\u4e00-\u9fff]", b))
+        if a_has_zh and b_has_en:
+            return f"{b}_{a}"
+        if a_has_en and b_has_zh:
+            return f"{a}_{b}"
+    return s
+
+_SUBCLASS_CANON_MAP = None
+
+def get_subclass_canonical_map():
+    global _SUBCLASS_CANON_MAP
+    if _SUBCLASS_CANON_MAP is not None:
+        return _SUBCLASS_CANON_MAP
+
+    mapping = {
+        "未知类别": "Unknown_未知类别",
+        "Unknown": "Unknown_未知类别",
+        "Unknown_未知类别": "Unknown_未知类别",
+        "绝对噪声相关": "Absolute Noise_绝对噪声相关",
+        "Absolute Noise_绝对噪声相关": "Absolute Noise_绝对噪声相关",
+        "交通基础设施": "Transport Infrastructure_交通基础设施",
+        "Transport Infrastructure_交通基础设施": "Transport Infrastructure_交通基础设施",
+        "临时/杂项设施": "Temporary/Misc Facilities_临时/杂项设施",
+        "Temporary/Misc Facilities_临时/杂项设施": "Temporary/Misc Facilities_临时/杂项设施",
+    }
+    try:
+        with open(KEYWORDS_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        for main_name, sub_dict in cfg.items():
+            if main_name == "__STRONG_KEYWORDS__" or not isinstance(sub_dict, dict):
+                continue
+            for sub_name in sub_dict.keys():
+                canon = normalize_bilingual_sub_label(sub_name)
+                mapping[sub_name] = canon
+                if "_" in canon:
+                    en, zh = canon.split("_", 1)
+                    mapping[en.strip()] = canon
+                    mapping[zh.strip()] = canon
+    except Exception:
+        pass
+    _SUBCLASS_CANON_MAP = mapping
+    return mapping
+
+def canonicalize_subclass_label(value):
+    s = str(value or "").strip()
+    if not s:
+        return "Unknown_未知类别"
+    mapping = get_subclass_canonical_map()
+
+    if "-" in s:
+        parts = []
+        for token in s.split("-"):
+            token = token.strip()
+            if not token:
+                continue
+            if ":" in token:
+                k, v = token.split(":", 1)
+                parts.append(f"{canonicalize_subclass_label(k)}:{v.strip()}")
+            else:
+                parts.append(canonicalize_subclass_label(token))
+        return "-".join(parts) if parts else "Unknown_未知类别"
+
+    n = normalize_bilingual_sub_label(s)
+    if s in mapping:
+        return mapping[s]
+    if n in mapping:
+        return mapping[n]
+    if "_" in n:
+        en, zh = n.split("_", 1)
+        if en in mapping:
+            return mapping[en]
+        if zh in mapping:
+            return mapping[zh]
+    return n
+
+def normalize_proportion_string(value, key_func):
+    s = str(value or "").strip()
+    if not s:
+        return s
+    if ":" not in s:
+        return key_func(s)
+    out = []
+    for token in s.split("-"):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" in token:
+            k, v = token.split(":", 1)
+            out.append(f"{key_func(k)}:{v.strip()}")
+        else:
+            out.append(key_func(token))
+    return "-".join(out)
 
 
 def _make_bilingual_note(en_text, zh_text):
@@ -79,7 +215,6 @@ def normalize_calibrated_note_to_bilingual(note):
 
 
 def load_ml_inputs():
-    print("[INFO] Status message emitted.")
     try:
         import pickle
         with open(FEATURE_X_ALL_PATH, 'rb') as f: X_all = pickle.load(f)
@@ -89,6 +224,21 @@ def load_ml_inputs():
         
         gdf_base_calibrated = gpd.read_file(FEATURE_GDF_BASE_CALIBRATED_PATH)
         df_rule_classified = pd.read_csv(AI_CALIBRATED_OUTPUT_PATH)
+
+        # Normalize BUILDINGSTRUCTUREID types across all inputs to avoid merge/index mismatch.
+        if hasattr(X_all, "index"):
+            X_all.index = X_all.index.map(normalize_building_id)
+        if hasattr(X_train_ml, "index"):
+            X_train_ml.index = X_train_ml.index.map(normalize_building_id)
+        if hasattr(y_multilabel, "index"):
+            y_multilabel.index = y_multilabel.index.map(normalize_building_id)
+        if hasattr(feature_base_indexed, "index"):
+            feature_base_indexed.index = feature_base_indexed.index.map(normalize_building_id)
+
+        if 'BUILDINGSTRUCTUREID' in gdf_base_calibrated.columns:
+            gdf_base_calibrated['BUILDINGSTRUCTUREID'] = gdf_base_calibrated['BUILDINGSTRUCTUREID'].apply(normalize_building_id)
+        if 'BUILDINGSTRUCTUREID' in df_rule_classified.columns:
+            df_rule_classified['BUILDINGSTRUCTUREID'] = df_rule_classified['BUILDINGSTRUCTUREID'].apply(normalize_building_id)
         
         with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
             KEYWORDS_CONFIG = json.load(f)
@@ -101,11 +251,9 @@ def load_ml_inputs():
             'df_rule_classified': df_rule_classified, 'keyword_tool': keyword_tool
         }
     except Exception as e:
-        print("[INFO] Status message emitted.")
         return None
 
 def train_main_class_models(X_train_ml, y_multilabel, X_all):
-    print("[INFO] Status message emitted.")
     X_train_s, X_val_s, y_train_s, y_val_s = train_test_split(X_train_ml, y_multilabel, test_size=0.2, random_state=42)
     models = {}
     predictions_proba = pd.DataFrame(index=X_all.index)
@@ -118,8 +266,7 @@ def train_main_class_models(X_train_ml, y_multilabel, X_all):
         y_train_s[col_name] = y_multilabel.loc[y_train_s.index, col_name]
         y_val_s[col_name] = y_multilabel.loc[y_val_s.index, col_name]
 
-    for main_class in tqdm(MAIN_CLASSES_ML, desc="训练主类分类器", leave=True, position=0):
-        print("[INFO] Status message emitted.")
+    for main_class in tqdm(MAIN_CLASSES_ML, desc="Training main-class classifier", leave=True, position=0):
         col_name = f'is_{main_class}'
         y_train_c = y_train_s[col_name]
         pos_count = y_train_c.sum()
@@ -145,7 +292,6 @@ def train_main_class_models(X_train_ml, y_multilabel, X_all):
             f1 = f1_score(y_val_s[col_name], val_preds, zero_division=0)
             performance_metrics[main_class] = f1
             
-            print("[INFO] Status message emitted.")
             print(classification_report(y_val_s[col_name], val_preds, zero_division=0))
 
             final_y_class = y_multilabel[col_name]
@@ -168,23 +314,16 @@ def train_main_class_models(X_train_ml, y_multilabel, X_all):
             predictions_proba[f'proba_{main_class}'] = proba[:, 1] if len(proba.shape) == 2 else proba.flatten()
             
         except Exception as e:
-            print("[INFO] Status message emitted.")
             predictions_proba[f'proba_{main_class}'] = 0.0
 
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
-    print("[INFO] Status message emitted.")
     if performance_metrics:
         avg_f1 = np.mean(list(performance_metrics.values()))
-        print("[INFO] Status message emitted.")
         for m_class, f1_val in performance_metrics.items():
-            print(f"   - {m_class}: {f1_val*100:.2f}%")
-    print("[INFO] Status message emitted.")
+            print(f"   - {canonicalize_main_label(m_class)}: {f1_val*100:.2f}%")
     
     return models, predictions_proba
 
 def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
-    print("[INFO] Status message emitted.")
     df_subclass_proportions = pd.DataFrame(index=X_all.index)
     rule_df = df_rule_classified.set_index('BUILDINGSTRUCTUREID')
     train_rule = rule_df.reindex(X_train_ml.index)
@@ -193,16 +332,12 @@ def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
         SUBCLASSES = sorted([k for k in keyword_tool['keywords_config'].get(main_class, {}).keys()])
         if not SUBCLASSES: continue
 
-        print("[INFO] Status message emitted.")
-        print("[INFO] Status message emitted.")
         
         mask = train_rule['Final_Main_Class'] == main_class
         X_sub = X_train_ml[mask]
         y_raw = train_rule.loc[mask, 'Final_Sub_Class']
         
-        print("[INFO] Status message emitted.")
         if len(X_sub) < 50:
-            print("[INFO] Status message emitted.")
             continue
 
         y_sub = pd.DataFrame(0.0, index=X_sub.index, columns=SUBCLASSES)
@@ -220,7 +355,6 @@ def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
 
         X_train_r, X_val_r, y_train_r, y_val_r = train_test_split(X_sub, y_sub, test_size=0.2, random_state=42)
         regressor = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1).fit(X_train_r, y_train_r)
-        print("[INFO] Status message emitted.")
 
         props = regressor.predict(X_all)
         df_props = pd.DataFrame(props, index=X_all.index, columns=SUBCLASSES)
@@ -231,7 +365,6 @@ def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
     return df_subclass_proportions
 
 def apply_ml_calibration(df_rule_classified, predictions_proba, subclass_props, X_all):
-    print("[INFO] Status message emitted.")
     
     PROBABILITY_THRESHOLD = 0.5
     
@@ -249,9 +382,15 @@ def apply_ml_calibration(df_rule_classified, predictions_proba, subclass_props, 
     
     ml_info_table = pd.concat([predictions_proba, subclass_props, df_ml_summary, summary_cols], axis=1)
     ml_info_table.index.name = 'BUILDINGSTRUCTUREID'
+    ml_info_reset = ml_info_table.reset_index()
+    ml_info_reset['BUILDINGSTRUCTUREID'] = ml_info_reset['BUILDINGSTRUCTUREID'].apply(normalize_building_id)
+    x_area_reset = X_all[['area']].reset_index()
+    x_area_reset['BUILDINGSTRUCTUREID'] = x_area_reset['BUILDINGSTRUCTUREID'].apply(normalize_building_id)
+    df_rule_classified = df_rule_classified.copy()
+    df_rule_classified['BUILDINGSTRUCTUREID'] = df_rule_classified['BUILDINGSTRUCTUREID'].apply(normalize_building_id)
     
-    df_to_calibrate = df_rule_classified.merge(ml_info_table.reset_index(), on='BUILDINGSTRUCTUREID', how='left')
-    df_to_calibrate = df_to_calibrate.merge(X_all[['area']].reset_index(), on='BUILDINGSTRUCTUREID', how='left')
+    df_to_calibrate = df_rule_classified.merge(ml_info_reset, on='BUILDINGSTRUCTUREID', how='left')
+    df_to_calibrate = df_to_calibrate.merge(x_area_reset, on='BUILDINGSTRUCTUREID', how='left')
 
     def final_calibration(row):
         rule_main = str(row.get('Final_Main_Class', '未知类别')).strip()
@@ -329,21 +468,22 @@ def apply_ml_calibration(df_rule_classified, predictions_proba, subclass_props, 
             return ('住宅类别', '其他房屋（Other Housing）', '其他房屋（Other Housing）:1.00', 'Fallback_to_Area', '全流程未识别,小面积归住宅')
         return ('商业类别', '其他商业（Other Commercial）', '其他商业（Other Commercial）:1.00', 'Fallback_to_Default', '强制兜底为商业')
 
-    tqdm.pandas(desc="执行终极校准与防篡改验证")
+    tqdm.pandas(desc="Applying final calibration and integrity guard")
     final_cols = df_to_calibrate.progress_apply(final_calibration, axis=1, result_type='expand')
     final_cols.columns = ['Calibrated_Main_Class', 'Calibrated_Sub_Class', 'Calibrated_Mix_Proportion', 'Calibrated_Source', 'Calibrated_Notes']
     final_cols['Calibrated_Notes'] = final_cols['Calibrated_Notes'].apply(normalize_calibrated_note_to_bilingual)
+    final_cols['Calibrated_Main_Class'] = final_cols['Calibrated_Main_Class'].apply(canonicalize_main_label)
+    final_cols['Calibrated_Sub_Class'] = final_cols['Calibrated_Sub_Class'].apply(canonicalize_subclass_label)
+    final_cols['Calibrated_Mix_Proportion'] = final_cols['Calibrated_Mix_Proportion'].apply(
+        lambda x: normalize_proportion_string(x, canonicalize_subclass_label)
+    )
     
-    print("[INFO] Status message emitted.")
     override_mask = final_cols['Calibrated_Notes'].str.contains('ML覆盖', na=False)
     override_df = final_cols[override_mask]
-    print("[INFO] Status message emitted.")
     if len(override_df) > 0:
-        print("[INFO] Status message emitted.")
         reasons = override_df['Calibrated_Notes'].str.extract(r'ML覆盖\[(.*?)\]')[0].value_counts()
         for r, c in reasons.items():
-            print("[INFO] Status message emitted.")
-    print("--------------------------------------------------")
+            pass
 
     return pd.concat([df_to_calibrate.drop(columns=['area'], errors='ignore'), final_cols], axis=1)
 
@@ -351,10 +491,10 @@ def generate_final_output(df_calibrated, gdf_base):
     final_df = df_calibrated.copy()
     
     final_df.to_csv(ML_FINAL_OUTPUT_PATH, index=False, encoding='utf-8-sig')
-    print("[INFO] Status message emitted.")
+    print(f"[INFO] Step 9 CSV exported: {ML_FINAL_OUTPUT_PATH}")
     
     geojson_path = ML_FINAL_OUTPUT_PATH.replace('.csv', '.geojson')
-    print("[INFO] Status message emitted.")
+    print(f"[INFO] Step 9 GeoJSON target: {geojson_path}")
     
     gdf_out = gdf_base[['BUILDINGSTRUCTUREID', 'geometry']].merge(
         final_df, on='BUILDINGSTRUCTUREID', how='inner'
@@ -365,52 +505,49 @@ def generate_final_output(df_calibrated, gdf_base):
             gdf_out[col] = gdf_out[col].fillna('').astype(str)
             
     gdf_out.to_file(geojson_path, driver='GeoJSON')
-    print("[INFO] Status message emitted.")
+    print(f"[INFO] Step 9 GeoJSON exported: {geojson_path}")
     
     return final_df
 
 def print_final_statistics(df):
-    print("\n" + "="*60)
-    print("[INFO] Status message emitted.")
-    print("="*60)
+    print("\n" + "=" * 60)
+    print("[INFO] Step 9 summary")
+    print("=" * 60)
 
-    print("[INFO] Status message emitted.")
-    main_counts = df['Calibrated_Main_Class'].value_counts()
-    for idx, count in main_counts.items():
-        print("[INFO] Status message emitted.")
+    main_counts = df['Calibrated_Main_Class'].value_counts(dropna=False)
+    print("[INFO] Main class distribution:")
+    print(main_counts.to_markdown())
 
-    print("[INFO] Status message emitted.")
-    sub_counts = df['Calibrated_Sub_Class'].value_counts()
-    for idx, count in sub_counts.items():
-        print("[INFO] Status message emitted.")
+    sub_counts = df['Calibrated_Sub_Class'].value_counts(dropna=False).head(15)
+    print("[INFO] Top 15 subclass distribution:")
+    print(sub_counts.to_markdown())
 
-    non_eval = df[df['Calibrated_Main_Class'] == '非评估类别']
-    print("[INFO] Status message emitted.")
-
-    mixed_df = df[df['Calibrated_Main_Class'] == '混合用途']
-    print("[INFO] Status message emitted.")
-    mix_combinations = mixed_df['Calibrated_Mix_Proportion'].value_counts()
-
-    print("[INFO] Status message emitted.")
-    for idx, count in mix_combinations.head(20).items():
-        print("[INFO] Status message emitted.")
-
-    print("\n" + "="*60)
+    non_eval_mask = df['Calibrated_Main_Class'].astype(str).str.contains('non-assessed|non assessed', case=False, regex=True, na=False)
+    mixed_mask = df['Calibrated_Main_Class'].astype(str).str.contains('mixed-use|mixed use', case=False, regex=True, na=False)
+    print(f"[INFO] Non-assessed records: {int(non_eval_mask.sum())}")
+    print(f"[INFO] Mixed-use records: {int(mixed_mask.sum())}")
+    print("\n" + "=" * 60)
 
 def main():
-    print("[INFO] Status message emitted.")
+    print("[INFO] Step 9 started: ML calibration")
     data = load_ml_inputs()
-    if not data: return False
-    
+    if not data:
+        print("[ERROR] Failed to load step 8 artifacts.")
+        return False
+
+    print(f"[INFO] Loaded features: total={len(data['X_all'])}, train={len(data['X_train_ml'])}")
+    print("[INFO] Training main-class models...")
     models, proba = train_main_class_models(data['X_train_ml'], data['y_multilabel'], data['X_all'])
+    print("[INFO] Training subclass models...")
     subclass_props = train_subclass_models(data['X_all'], data['X_train_ml'], data['df_rule_classified'], data['keyword_tool'])
-    
+
+    print("[INFO] Applying ML calibration to step 7 records...")
     df_calibrated = apply_ml_calibration(data['df_rule_classified'], proba, subclass_props, data['X_all'])
-    
+
     final_df = generate_final_output(df_calibrated, data['gdf_base_calibrated'])
     print_final_statistics(final_df)
-    
-    print("[INFO] Status message emitted.")
+
+    print("[INFO] Step 9 completed.")
     return True
 
 class Logger(object):
@@ -441,8 +578,8 @@ if __name__ == "__main__":
     sys.stdout = Logger(log_file_path)
     sys.stderr = sys.stdout 
     
-    print("[INFO] Status message emitted.")
-    
+    print(f"[INFO] Logging to: {log_file_path}")
+
     try:
         success = main()
         if not success: sys.exit(1)
