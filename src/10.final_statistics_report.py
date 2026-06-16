@@ -36,8 +36,9 @@ os.makedirs(LOG_DIR, exist_ok=True)
 INPUT_CSV = ML_FINAL_OUTPUT_PATH
 INPUT_GEOJSON = ML_FINAL_OUTPUT_PATH.replace(".csv", ".geojson")
 
-PUBLIC_CSV = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1.csv")
-PUBLIC_GEOJSON = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1.geojson")
+PUBLIC_VERSION_TAG = "v1_1"
+PUBLIC_CSV = os.path.join(OUTPUT_DIR, f"HK_UBEM_Buildings_Public_{PUBLIC_VERSION_TAG}.csv")
+PUBLIC_GEOJSON = os.path.join(OUTPUT_DIR, f"HK_UBEM_Buildings_Public_{PUBLIC_VERSION_TAG}.geojson")
 
 STEP10_MAPPINGS_FILE = os.path.join(os.path.dirname(BASE_DIR), "ctl", "step10_public_mappings.json")
 if os.path.exists(STEP10_MAPPINGS_FILE):
@@ -49,6 +50,16 @@ else:
 SUB_TO_MAIN = _step10_mappings.get("SUB_TO_MAIN", {})
 MAIN_CLASS_DICT = _step10_mappings.get("MAIN_CLASS_DICT", {})
 SUB_CLASS_PATCH_DICT = _step10_mappings.get("SUB_CLASS_PATCH_DICT", {})
+
+RELEASE_LABEL_PATCHES = {
+    "非制造业（Non-manufacturing）": "Non-manufacturing_非制造业",
+    "Other Government Buildings (Offices, Schools, Hospitals, etc.)_其他政府建筑": "Other Commercial_其他商业",
+    "Transport Infrastructure_Transport Infrastructure (交通基础设施)": "Transport Infrastructure_交通基础设施",
+    "Temporary/Misc Facilities_Temporary/Misc Facilities (临时/杂项设施)": "Temporary/Miscellaneous Structures_临时/杂项设施",
+    "Temporary/Misc Facilities_临时/杂项设施": "Temporary/Miscellaneous Structures_临时/杂项设施",
+    "Absolute Noise_绝对噪声相关": "Noise-related Infrastructure_噪声相关基础设施",
+    "Absolute Noise Related (绝对噪声相关)": "Noise-related Infrastructure_噪声相关基础设施",
+}
 
 
 
@@ -76,6 +87,35 @@ def is_mixed_main_class(main_value: str) -> bool:
         return False
     s = str(main_value).strip().lower()
     return ("mixed" in s) or ("混合" in s)
+
+def is_non_assessed_main_class(main_value: str) -> bool:
+    if pd.isna(main_value):
+        return False
+    s = str(main_value).strip()
+    low = s.lower()
+    return ("non-assessed" in low) or ("non assessed" in low) or ("非评估" in s)
+
+def canonical_non_assessed_subclass(row: pd.Series) -> str:
+    text = " ".join([
+        str(row.get("Calibrated_Sub_Class", "")),
+        str(row.get("UBEM_Sub_Class_子类别", "")),
+        str(row.get("UBEM_Mixed_Proportions_混合比例", "")),
+        str(row.get("Calibrated_Source", "")),
+        str(row.get("Calibrated_Notes", "")),
+        str(row.get("Classification_Source", "")),
+        str(row.get("Classification_Notes", "")),
+        str(row.get("BUILDINGNAMEEN", "")),
+        str(row.get("BUILDINGNAMETC", "")),
+        str(row.get("OZP_DESC_ENG", "")),
+    ]).lower()
+
+    if any(token in text for token in ["transport", "road", "rail", "flyover", "viaduct", "bridge", "tunnel", "交通", "道路", "铁路", "天桥", "隧道"]):
+        return "Transport Infrastructure_交通基础设施"
+
+    if any(token in text for token in ["noise", "sound", "barrier", "outfall", "lighthouse", "噪声", "噪音", "屏障", "排污口", "灯塔", "燈塔"]):
+        return "Noise-related Infrastructure_噪声相关基础设施"
+
+    return "Temporary/Miscellaneous Structures_临时/杂项设施"
 
 def canonicalize_main_label(value: str) -> str:
     if pd.isna(value):
@@ -141,6 +181,14 @@ def translate_mix_prop(prop_str):
         res = res.replace(cn_term, en_cn_term)
     return res
 
+def apply_release_label_patches(value):
+    if pd.isna(value):
+        return value
+    res = str(value)
+    for old, new in RELEASE_LABEL_PATCHES.items():
+        res = res.replace(old, new)
+    return res
+
 def repair_subclass_consistency(df: pd.DataFrame):
     df_fixed = df.copy()
     changes = []
@@ -150,6 +198,21 @@ def repair_subclass_consistency(df: pd.DataFrame):
         old_sub = normalize_label(row.get("Calibrated_Sub_Class", ""))
         mix_prop = row.get("Calibrated_Mix_Proportion", "")
         building_id = row.get("BUILDINGSTRUCTUREID", None)
+
+        if is_non_assessed_main_class(main_cls):
+            fixed_sub = canonical_non_assessed_subclass(row)
+            fixed_prop = f"{fixed_sub}:1.00"
+            if old_sub != normalize_label(fixed_sub) or normalize_label(mix_prop) != normalize_label(fixed_prop):
+                df_fixed.at[idx, "Calibrated_Sub_Class"] = fixed_sub
+                df_fixed.at[idx, "Calibrated_Mix_Proportion"] = fixed_prop
+                changes.append({
+                    "BUILDINGSTRUCTUREID": building_id,
+                    "Calibrated_Main_Class": main_cls,
+                    "Old_Calibrated_Sub_Class": old_sub,
+                    "New_Calibrated_Sub_Class": fixed_sub,
+                    "Calibrated_Mix_Proportion": fixed_prop
+                })
+            continue
 
         if is_mixed_main_class(main_cls):
             continue
@@ -179,6 +242,21 @@ def qa_subclass_consistency(df: pd.DataFrame):
 
     for _, row in df.iterrows():
         main_cls = row.get("Calibrated_Main_Class", "")
+        if is_non_assessed_main_class(main_cls):
+            current_sub = normalize_label(row.get("Calibrated_Sub_Class", ""))
+            expected_sub = normalize_label(canonical_non_assessed_subclass(row))
+            expected_prop = normalize_label(f"{expected_sub}:1.00")
+            current_prop = normalize_label(row.get("Calibrated_Mix_Proportion", ""))
+            if current_sub != expected_sub or current_prop != expected_prop:
+                issues.append({
+                    "BUILDINGSTRUCTUREID": row.get("BUILDINGSTRUCTUREID", None),
+                    "Calibrated_Main_Class": main_cls,
+                    "Calibrated_Sub_Class": current_sub,
+                    "Dominant_From_Vector": expected_sub,
+                    "Calibrated_Mix_Proportion": row.get("Calibrated_Mix_Proportion", "")
+                })
+            continue
+
         if is_mixed_main_class(main_cls):
             continue
 
@@ -200,6 +278,27 @@ def qa_subclass_consistency(df: pd.DataFrame):
             })
 
     return pd.DataFrame(issues)
+
+def enforce_public_non_assessed_fields(public_df: pd.DataFrame) -> pd.DataFrame:
+    required_cols = [
+        "UBEM_Main_Class_主类别",
+        "UBEM_Sub_Class_子类别",
+        "UBEM_Mixed_Proportions_混合比例",
+    ]
+    if not all(col in public_df.columns for col in required_cols):
+        return public_df
+
+    df = public_df.copy()
+    non_mask = df["UBEM_Main_Class_主类别"].apply(is_non_assessed_main_class)
+    if not non_mask.any():
+        return df
+
+    for idx, row in df.loc[non_mask].iterrows():
+        fixed_sub = canonical_non_assessed_subclass(row)
+        df.at[idx, "UBEM_Sub_Class_子类别"] = fixed_sub
+        df.at[idx, "UBEM_Mixed_Proportions_混合比例"] = f"{fixed_sub}:1.00"
+
+    return df
 
 
 def _read_geojson_quiet(path, **kwargs):
@@ -385,9 +484,13 @@ def generate_public_dataset(df, gdf):
 
     if 'UBEM_Sub_Class_子类别' in public_df.columns:
         public_df['UBEM_Sub_Class_子类别'] = public_df['UBEM_Sub_Class_子类别'].apply(patch_orphan_subclass_label)
+        public_df['UBEM_Sub_Class_子类别'] = public_df['UBEM_Sub_Class_子类别'].apply(apply_release_label_patches)
 
     if 'UBEM_Mixed_Proportions_混合比例' in public_df.columns:
         public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(translate_mix_prop)
+        public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(apply_release_label_patches)
+
+    public_df = enforce_public_non_assessed_fields(public_df)
 
     public_df.to_csv(PUBLIC_CSV, index=False, encoding='utf-8-sig')
     print(f"[INFO] Public CSV exported: {PUBLIC_CSV}")
@@ -415,7 +518,7 @@ def generate_public_dataset(df, gdf):
     print(f"[INFO] Public GeoJSON exported: {PUBLIC_GEOJSON}")
 
     readme_text = """
-HK_UBEM_Buildings_Public_v1 Dataset
+HK_UBEM_Buildings_Public_v1_1 Dataset
 ------------------------------------------------------------
 This dataset provides a highly granular, 3D-enriched, and semantically calibrated
 building stock model for Hong Kong, designed specifically for Urban Building
