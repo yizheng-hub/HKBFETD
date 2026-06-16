@@ -14,12 +14,11 @@ from collections import Counter
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, mean_squared_error, f1_score
-from sklearn.ensemble import RandomForestRegressor
-from imblearn.over_sampling import SMOTE
-import lightgbm as lgb
+from sklearn.ensemble import ExtraTreesRegressor
+from xgboost import XGBClassifier
 
 from config import (
-    MAIN_CLASSES_ML, PROBABILITY_THRESHOLD, SMOTE_MIN_SAMPLES, SMOTE_K_NEIGHBORS,
+    MAIN_CLASSES_ML, PROBABILITY_THRESHOLD,
     INTERMEDIATE_DIR, OUTPUT_DIR, FEATURE_X_ALL_PATH, FEATURE_X_TRAIN_ML_PATH,
     FEATURE_Y_MULTILABEL_PATH, FEATURE_BASE_INDEXED_PATH, FEATURE_GDF_BASE_CALIBRATED_PATH,
     RULE_ENGINE_OUTPUT_PATH, AI_CALIBRATED_OUTPUT_PATH, AGGREGATED_GDF_PATH, KEYWORDS_FILE, 
@@ -123,6 +122,18 @@ def canonicalize_subclass_label(value):
         return "Unknown_未知类别"
     mapping = get_subclass_canonical_map()
 
+    n = normalize_bilingual_sub_label(s)
+    if s in mapping:
+        return mapping[s]
+    if n in mapping:
+        return mapping[n]
+    if "_" in n:
+        en, zh = n.split("_", 1)
+        if en in mapping:
+            return mapping[en]
+        if zh in mapping:
+            return mapping[zh]
+
     if "-" in s:
         parts = []
         for token in s.split("-"):
@@ -135,19 +146,34 @@ def canonicalize_subclass_label(value):
             else:
                 parts.append(canonicalize_subclass_label(token))
         return "-".join(parts) if parts else "Unknown_未知类别"
-
-    n = normalize_bilingual_sub_label(s)
-    if s in mapping:
-        return mapping[s]
-    if n in mapping:
-        return mapping[n]
-    if "_" in n:
-        en, zh = n.split("_", 1)
-        if en in mapping:
-            return mapping[en]
-        if zh in mapping:
-            return mapping[zh]
     return n
+
+def subclass_label_matches(candidate, observed):
+    """Compare subclass labels across legacy Chinese-English and release formats."""
+    candidate_canon = canonicalize_subclass_label(candidate)
+    observed_text = str(observed or "").strip()
+    if not observed_text:
+        return False
+
+    if canonicalize_subclass_label(observed_text) == candidate_canon:
+        return True
+
+    tokens = []
+    for raw_token in observed_text.split("-"):
+        token = raw_token.strip()
+        if not token:
+            continue
+        if ":" in token:
+            token = token.split(":", 1)[0].strip()
+        tokens.append(token)
+
+    if not tokens:
+        tokens = [observed_text]
+
+    for token in tokens:
+        if canonicalize_subclass_label(token) == candidate_canon:
+            return True
+    return False
 
 def normalize_proportion_string(value, key_func):
     s = str(value or "").strip()
@@ -156,7 +182,7 @@ def normalize_proportion_string(value, key_func):
     if ":" not in s:
         return key_func(s)
     out = []
-    for token in s.split("-"):
+    for token in re.split(r"(?<=\d)-", s):
         token = token.strip()
         if not token:
             continue
@@ -269,24 +295,14 @@ def train_main_class_models(X_train_ml, y_multilabel, X_all):
     for main_class in tqdm(MAIN_CLASSES_ML, desc="Training main-class classifier", leave=True, position=0):
         col_name = f'is_{main_class}'
         y_train_c = y_train_s[col_name]
-        pos_count = y_train_c.sum()
-        
-        X_train_resampled, y_train_resampled = X_train_s, y_train_c
-        if pos_count > 0:
-            if pos_count < SMOTE_MIN_SAMPLES:
-                try:
-                    k_neigh = max(1, min(pos_count - 1, 5))
-                    smote = SMOTE(random_state=42, sampling_strategy={1: SMOTE_MIN_SAMPLES}, k_neighbors=k_neigh)
-                    X_train_resampled, y_train_resampled = smote.fit_resample(X_train_s, y_train_c)
-                except: pass
-            elif (len(y_train_c) / pos_count) > 2:
-                try:
-                    smote = SMOTE(random_state=42)
-                    X_train_resampled, y_train_resampled = smote.fit_resample(X_train_s, y_train_c)
-                except: pass
-        
         try:
-            model = lgb.LGBMClassifier(random_state=42, verbose=-1).fit(X_train_resampled, y_train_resampled)
+            model = XGBClassifier(
+                n_estimators=100,
+                eval_metric="logloss",
+                random_state=42,
+                n_jobs=-1,
+                verbosity=0,
+            ).fit(X_train_s, y_train_c)
             
             val_preds = model.predict(X_val_s)
             f1 = f1_score(y_val_s[col_name], val_preds, zero_division=0)
@@ -295,20 +311,13 @@ def train_main_class_models(X_train_ml, y_multilabel, X_all):
             print(classification_report(y_val_s[col_name], val_preds, zero_division=0))
 
             final_y_class = y_multilabel[col_name]
-            final_pos_count = final_y_class.sum()
-            X_final_resampled, y_final_resampled = X_train_ml, final_y_class
-            
-            if final_pos_count > 0:
-                try:
-                    if final_pos_count < SMOTE_MIN_SAMPLES:
-                        smote_final = SMOTE(random_state=42, sampling_strategy={1: SMOTE_MIN_SAMPLES}, k_neighbors=max(1, min(final_pos_count - 1, 5)))
-                    elif (len(final_y_class) / final_pos_count) > 2:
-                        smote_final = SMOTE(random_state=42)
-                    if smote_final:
-                        X_final_resampled, y_final_resampled = smote_final.fit_resample(X_train_ml, final_y_class)
-                except: pass 
-            
-            final_model = lgb.LGBMClassifier(random_state=42, verbose=-1).fit(X_final_resampled, y_final_resampled)
+            final_model = XGBClassifier(
+                n_estimators=100,
+                eval_metric="logloss",
+                random_state=42,
+                n_jobs=-1,
+                verbosity=0,
+            ).fit(X_train_ml, final_y_class)
             models[main_class] = final_model
             proba = final_model.predict_proba(X_all)
             predictions_proba[f'proba_{main_class}'] = proba[:, 1] if len(proba.shape) == 2 else proba.flatten()
@@ -333,7 +342,8 @@ def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
         if not SUBCLASSES: continue
 
         
-        mask = train_rule['Final_Main_Class'] == main_class
+        target_main = canonicalize_main_label(main_class)
+        mask = train_rule['Final_Main_Class'].apply(canonicalize_main_label) == target_main
         X_sub = X_train_ml[mask]
         y_raw = train_rule.loc[mask, 'Final_Sub_Class']
         
@@ -347,14 +357,18 @@ def train_subclass_models(X_all, X_train_ml, df_rule_classified, keyword_tool):
                 continue
             matched = False
             for sub_col in SUBCLASSES:
-                if sub_col.split('（')[0] in str(val) or str(val) in sub_col:
+                if subclass_label_matches(sub_col, val):
                     y_sub.loc[idx, sub_col] = 1.0
                     matched = True
                     break
             if not matched: y_sub.loc[idx, SUBCLASSES[0]] = 1.0
 
         X_train_r, X_val_r, y_train_r, y_val_r = train_test_split(X_sub, y_sub, test_size=0.2, random_state=42)
-        regressor = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1).fit(X_train_r, y_train_r)
+        regressor = ExtraTreesRegressor(n_estimators=200, random_state=42, n_jobs=-1).fit(X_train_r, y_train_r)
+
+        val_preds = regressor.predict(X_val_r)
+        mse = mean_squared_error(y_val_r, val_preds)
+        print(f"[INFO] Subclass proportion MSE for {target_main}: {mse:.5f}")
 
         props = regressor.predict(X_all)
         df_props = pd.DataFrame(props, index=X_all.index, columns=SUBCLASSES)

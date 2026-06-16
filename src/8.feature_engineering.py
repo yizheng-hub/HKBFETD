@@ -28,6 +28,7 @@ from config import (
     FEATURE_BASE_INDEXED_PATH,
     FEATURE_GDF_BASE_CALIBRATED_PATH,
     NEIGHBOR_DENSITY_RADIUS,
+    DOMINANT_NEIGHBOR_RADIUS,
     COMPACTNESS_EPSILON,
 )
 
@@ -180,17 +181,20 @@ def compute_advanced_features(gdf_base_calibrated, training_data_ml):
     gdf_all = gdf_base_calibrated.set_index("BUILDINGSTRUCTUREID")
     feature_base_indexed = feature_base.set_index("BUILDINGSTRUCTUREID")
 
+    density_col = f"neighbor_density_{int(NEIGHBOR_DENSITY_RADIUS)}m"
+    dominant_col = f"dominant_neighbor_class_{int(DOMINANT_NEIGHBOR_RADIUS)}m"
+
     buffered_geoms = feature_base_indexed.geometry.buffer(NEIGHBOR_DENSITY_RADIUS)
     neighbor_counts = []
     for geom in tqdm(buffered_geoms, desc="Computing neighbor density", total=len(buffered_geoms)):
         idx = list(gdf_all.sindex.query(geom, predicate="intersects"))
         neighbor_counts.append(max(0, len(idx) - 1))
-    feature_base_indexed["neighbor_density_50m"] = neighbor_counts
+    feature_base_indexed[density_col] = neighbor_counts
 
     known_neighbors = gdf_all[~gdf_all["Final_Main_Class"].apply(is_mixed_unknown_or_non_assessed)].copy()
 
     def get_dominant_neighbor_class(geom):
-        buf = geom.buffer(100)
+        buf = geom.buffer(DOMINANT_NEIGHBOR_RADIUS)
         idx = list(known_neighbors.sindex.query(buf, predicate="intersects"))
         if not idx:
             return -1
@@ -206,7 +210,7 @@ def compute_advanced_features(gdf_base_calibrated, training_data_ml):
     dominant = []
     for geom in tqdm(feature_base_indexed.geometry, desc="Computing dominant neighbor class", total=len(feature_base_indexed)):
         dominant.append(get_dominant_neighbor_class(geom))
-    feature_base_indexed["dominant_neighbor_class_100m"] = dominant
+    feature_base_indexed[dominant_col] = dominant
 
     feature_columns = [
         "area",
@@ -215,8 +219,8 @@ def compute_advanced_features(gdf_base_calibrated, training_data_ml):
         "centroid_x",
         "centroid_y",
         "ozp_code",
-        "neighbor_density_50m",
-        "dominant_neighbor_class_100m",
+        density_col,
+        dominant_col,
         "Estimated_Height",
     ]
     for col in feature_columns:

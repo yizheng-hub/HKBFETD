@@ -74,8 +74,8 @@ Run scripts in order under `src/`:
 
 - `output/step9_ml_calibrated_classification.csv`
 - `output/step9_ml_calibrated_classification.geojson`
-- `output/HK_UBEM_Buildings_Public_v1.csv`
-- `output/HK_UBEM_Buildings_Public_v1.geojson`
+- `output/HK_UBEM_Buildings_Public_v1_1.csv`
+- `output/HK_UBEM_Buildings_Public_v1_1.geojson`
 
 ## License
 
