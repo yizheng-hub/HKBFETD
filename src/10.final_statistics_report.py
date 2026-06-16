@@ -52,11 +52,6 @@ MAIN_CLASS_DICT = _step10_mappings.get("MAIN_CLASS_DICT", {})
 SUB_CLASS_PATCH_DICT = _step10_mappings.get("SUB_CLASS_PATCH_DICT", {})
 
 RELEASE_LABEL_PATCHES = {
-    "Non-Non-manufacturing_非制造业": "Non-manufacturing_非制造业",
-    "Non-Non-manufacturing": "Non-manufacturing",
-    "Commercial_商业类别": "Other Commercial_其他商业",
-    "Industrial_工业类别": "Other Industrial_其他工业",
-    "Residential_住宅类别": "Private Housing_私人房屋",
     "非制造业（Non-manufacturing）": "Non-manufacturing_非制造业",
     "Other Government Buildings (Offices, Schools, Hospitals, etc.)_其他政府建筑": "Other Commercial_其他商业",
     "Transport Infrastructure_Transport Infrastructure (交通基础设施)": "Transport Infrastructure_交通基础设施",
@@ -64,9 +59,6 @@ RELEASE_LABEL_PATCHES = {
     "Temporary/Misc Facilities_临时/杂项设施": "Temporary/Miscellaneous Structures_临时/杂项设施",
     "Absolute Noise_绝对噪声相关": "Noise-related Infrastructure_噪声相关基础设施",
     "Absolute Noise Related (绝对噪声相关)": "Noise-related Infrastructure_噪声相关基础设施",
-    "车厂_车厂": "Other Commercial_其他商业",
-    "车厂": "Other Commercial_其他商业",
-    "庙宇": "Other Commercial_其他商业",
 }
 
 
@@ -309,58 +301,6 @@ def enforce_public_non_assessed_fields(public_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def enforce_public_main_subclass_alignment(public_df: pd.DataFrame) -> pd.DataFrame:
-    required_cols = [
-        "UBEM_Main_Class_主类别",
-        "UBEM_Sub_Class_子类别",
-    ]
-    if not all(col in public_df.columns for col in required_cols):
-        return public_df
-
-    df = public_df.copy()
-    commercial_subclasses = {
-        "Accommodation_住宿",
-        "Data Centre_数据中心",
-        "Education_教育",
-        "Food & Beverage_食品及饮品",
-        "Human Health_医疗",
-        "Office_办公室",
-        "Other Commercial_其他商业",
-        "Restaurant_食肆",
-        "Retail_零售",
-        "Transport Infrastructure_交通基础设施",
-    }
-    industrial_subclasses = {
-        "Electronics_电子产品",
-        "Food & Beverage_食品及饮品",
-        "Metal & Machinery_金属及机械",
-        "Non-manufacturing_非制造业",
-        "Other Industrial_其他工业",
-        "Textile & Wearing Apparel_纺织及服装制品",
-    }
-    residential_subclasses = {
-        "HA Subsidized Sale Flats_房委会资助出售单位",
-        "Other Housing_其他房屋",
-        "Private Housing_私人房屋",
-        "Public Housing_公共房屋",
-    }
-
-    for idx, row in df.iterrows():
-        main_cls = row.get("UBEM_Main_Class_主类别", "")
-        if is_mixed_main_class(main_cls) or is_non_assessed_main_class(main_cls):
-            continue
-
-        sub_cls = row.get("UBEM_Sub_Class_子类别", "")
-        if sub_cls in residential_subclasses:
-            df.at[idx, "UBEM_Main_Class_主类别"] = "Residential_住宅类别"
-        elif sub_cls in commercial_subclasses:
-            df.at[idx, "UBEM_Main_Class_主类别"] = "Commercial_商业类别"
-        elif sub_cls in industrial_subclasses:
-            df.at[idx, "UBEM_Main_Class_主类别"] = "Industrial_工业类别"
-
-    return df
-
-
 def _read_geojson_quiet(path, **kwargs):
     # Suppress noisy GDAL/OGR stderr warnings for unsupported non-scalar fields.
     err_buffer = io.StringIO()
@@ -551,7 +491,6 @@ def generate_public_dataset(df, gdf):
         public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(apply_release_label_patches)
 
     public_df = enforce_public_non_assessed_fields(public_df)
-    public_df = enforce_public_main_subclass_alignment(public_df)
 
     public_df.to_csv(PUBLIC_CSV, index=False, encoding='utf-8-sig')
     print(f"[INFO] Public CSV exported: {PUBLIC_CSV}")

@@ -12,7 +12,6 @@ dependencies:
   - pyarrow
   - scikit-learn
   - lightgbm
-  - xgboost
   - imbalanced-learn
   - matplotlib
   - seaborn
