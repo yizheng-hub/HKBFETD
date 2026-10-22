@@ -1,0 +1,11 @@
+{
+  "dataset": "LandsD Open3Dhk DTM point samples",
+  "endpoint": "https://3d.map.gov.hk/mapviewer/api/getZ/dtm",
+  "retrieved_utc": "2026-08-30T15:58:27.748488+00:00",
+  "coordinate_reference_system": "EPSG:4326 request points",
+  "elevation_interpretation": "metres relative to Hong Kong Principal Datum",
+  "sampling_geometry": "LandsD building representative point",
+  "records": 181627,
+  "nonmissing_elevations": 181627,
+  "warning": "Point DTM samples are spatial evidence, not surveyed building base heights."
+}

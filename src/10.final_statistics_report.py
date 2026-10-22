@@ -1,594 +1,547 @@
-﻿# 10.final_statistics_report.py
-# -*- coding: utf-8 -*-
-
-
-import os
-import sys
-import re
+"""Step 10: versioned release, physical-value gates and complete v1.1 comparison."""
 import json
-import math
-import io
+from pathlib import Path
+import numpy as np
 import pandas as pd
+import pyogrio
 import geopandas as gpd
-from collections import defaultdict
-import warnings
-from contextlib import redirect_stderr
-
-warnings.filterwarnings('ignore')
-
-from config import OUTPUT_DIR, ML_FINAL_OUTPUT_PATH
-
-conda_prefix = sys.prefix
-proj_lib_path = os.path.join(conda_prefix, 'Library', 'share', 'proj')
-if os.path.exists(proj_lib_path):
-    os.environ['PROJ_LIB'] = proj_lib_path
-    os.environ['PROJ_DATA'] = proj_lib_path
-else:
-    fallback_path = os.path.join(conda_prefix, 'share', 'proj')
-    os.environ['PROJ_LIB'] = fallback_path
-    os.environ['PROJ_DATA'] = fallback_path
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(BASE_DIR)
-LOG_DIR = os.path.join(PROJECT_DIR, "log")
-os.makedirs(LOG_DIR, exist_ok=True)
-
-INPUT_CSV = ML_FINAL_OUTPUT_PATH
-INPUT_GEOJSON = ML_FINAL_OUTPUT_PATH.replace(".csv", ".geojson")
-
-PUBLIC_VERSION_TAG = "v1_1"
-PUBLIC_CSV = os.path.join(OUTPUT_DIR, f"HK_UBEM_Buildings_Public_{PUBLIC_VERSION_TAG}.csv")
-PUBLIC_GEOJSON = os.path.join(OUTPUT_DIR, f"HK_UBEM_Buildings_Public_{PUBLIC_VERSION_TAG}.geojson")
-
-STEP10_MAPPINGS_FILE = os.path.join(os.path.dirname(BASE_DIR), "ctl", "step10_public_mappings.json")
-if os.path.exists(STEP10_MAPPINGS_FILE):
-    with open(STEP10_MAPPINGS_FILE, "r", encoding="utf-8") as f:
-        _step10_mappings = json.load(f)
-else:
-    _step10_mappings = {}
-
-SUB_TO_MAIN = _step10_mappings.get("SUB_TO_MAIN", {})
-MAIN_CLASS_DICT = _step10_mappings.get("MAIN_CLASS_DICT", {})
-SUB_CLASS_PATCH_DICT = _step10_mappings.get("SUB_CLASS_PATCH_DICT", {})
-
-RELEASE_LABEL_PATCHES = {
-    "非制造业（Non-manufacturing）": "Non-manufacturing_非制造业",
-    "Other Government Buildings (Offices, Schools, Hospitals, etc.)_其他政府建筑": "Other Commercial_其他商业",
-    "Transport Infrastructure_Transport Infrastructure (交通基础设施)": "Transport Infrastructure_交通基础设施",
-    "Temporary/Misc Facilities_Temporary/Misc Facilities (临时/杂项设施)": "Temporary/Miscellaneous Structures_临时/杂项设施",
-    "Temporary/Misc Facilities_临时/杂项设施": "Temporary/Miscellaneous Structures_临时/杂项设施",
-    "Absolute Noise_绝对噪声相关": "Noise-related Infrastructure_噪声相关基础设施",
-    "Absolute Noise Related (绝对噪声相关)": "Noise-related Infrastructure_噪声相关基础设施",
-}
-
-
-
-def normalize_id(x):
-    if pd.isna(x):
-        return ""
-    s = str(x).strip()
-    if s.endswith(".0"):
-        s = s[:-2]
-    return s
-
-def normalize_label(label: str) -> str:
-    if pd.isna(label):
-        return ""
-    s = str(label).strip()
-    s = s.strip(" -")
-    s = s.replace("(", "（").replace(")", "）")
-    s = re.sub(r"\s*（\s*", "（", s)
-    s = re.sub(r"\s*）\s*", "）", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def is_mixed_main_class(main_value: str) -> bool:
-    if pd.isna(main_value):
-        return False
-    s = str(main_value).strip().lower()
-    return ("mixed" in s) or ("混合" in s)
-
-def is_non_assessed_main_class(main_value: str) -> bool:
-    if pd.isna(main_value):
-        return False
-    s = str(main_value).strip()
-    low = s.lower()
-    return ("non-assessed" in low) or ("non assessed" in low) or ("非评估" in s)
-
-def canonical_non_assessed_subclass(row: pd.Series) -> str:
-    text = " ".join([
-        str(row.get("Calibrated_Sub_Class", "")),
-        str(row.get("UBEM_Sub_Class_子类别", "")),
-        str(row.get("UBEM_Mixed_Proportions_混合比例", "")),
-        str(row.get("Calibrated_Source", "")),
-        str(row.get("Calibrated_Notes", "")),
-        str(row.get("Classification_Source", "")),
-        str(row.get("Classification_Notes", "")),
-        str(row.get("BUILDINGNAMEEN", "")),
-        str(row.get("BUILDINGNAMETC", "")),
-        str(row.get("OZP_DESC_ENG", "")),
-    ]).lower()
-
-    if any(token in text for token in ["transport", "road", "rail", "flyover", "viaduct", "bridge", "tunnel", "交通", "道路", "铁路", "天桥", "隧道"]):
-        return "Transport Infrastructure_交通基础设施"
-
-    if any(token in text for token in ["noise", "sound", "barrier", "outfall", "lighthouse", "噪声", "噪音", "屏障", "排污口", "灯塔", "燈塔"]):
-        return "Noise-related Infrastructure_噪声相关基础设施"
-
-    return "Temporary/Miscellaneous Structures_临时/杂项设施"
-
-def canonicalize_main_label(value: str) -> str:
-    if pd.isna(value):
-        return "Unknown_未知类别"
-    s = str(value).strip()
-    low = s.lower()
-    if ("residential" in low) or ("住宅" in s):
-        return "Residential_住宅类别"
-    if ("commercial" in low) or ("商业" in s):
-        return "Commercial_商业类别"
-    if ("industrial" in low) or ("工业" in s):
-        return "Industrial_工业类别"
-    if ("mixed-use" in low) or ("mixed use" in low) or ("混合" in s):
-        return "Mixed-use_混合用途"
-    if ("non-assessed" in low) or ("non assessed" in low) or ("非评估" in s):
-        return "Non-assessed_非评估类别"
-    if ("unknown" in low) or ("未知" in s):
-        return "Unknown_未知类别"
-    return s
-
-def parse_proportion_string(prop_str: str):
-    if pd.isna(prop_str):
-        return {}
-
-    s = str(prop_str).strip()
-    if not s or ":" not in s:
-        return {}
-
-    parsed = {}
-    pattern = re.compile(r'([^:]+?)\s*:\s*([0-9]*\.?[0-9]+)')
-    matches = pattern.findall(s)
-
-    for raw_label, raw_value in matches:
-        label = normalize_label(raw_label)
-        try:
-            value = float(raw_value)
-        except Exception:
-            continue
-
-        if label and value > 0:
-            parsed[label] = value
-
-    return parsed
-
-def dominant_subclass_from_vector(prop_str: str):
-    parsed = parse_proportion_string(prop_str)
-    if not parsed:
-        return None
-    dominant = sorted(parsed.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-    return dominant
-
-def patch_orphan_subclass_label(label: str) -> str:
-    if pd.isna(label):
-        return label
-    s = str(label)
-    return SUB_CLASS_PATCH_DICT.get(s, s)
-
-def translate_mix_prop(prop_str):
-    if pd.isna(prop_str):
-        return prop_str
-    res = str(prop_str)
-    for cn_term, en_cn_term in SUB_CLASS_PATCH_DICT.items():
-        res = res.replace(cn_term, en_cn_term)
-    return res
-
-def apply_release_label_patches(value):
-    if pd.isna(value):
-        return value
-    res = str(value)
-    for old, new in RELEASE_LABEL_PATCHES.items():
-        res = res.replace(old, new)
-    return res
-
-def repair_subclass_consistency(df: pd.DataFrame):
-    df_fixed = df.copy()
-    changes = []
-
-    for idx, row in df_fixed.iterrows():
-        main_cls = row.get("Calibrated_Main_Class", "")
-        old_sub = normalize_label(row.get("Calibrated_Sub_Class", ""))
-        mix_prop = row.get("Calibrated_Mix_Proportion", "")
-        building_id = row.get("BUILDINGSTRUCTUREID", None)
-
-        if is_non_assessed_main_class(main_cls):
-            fixed_sub = canonical_non_assessed_subclass(row)
-            fixed_prop = f"{fixed_sub}:1.00"
-            if old_sub != normalize_label(fixed_sub) or normalize_label(mix_prop) != normalize_label(fixed_prop):
-                df_fixed.at[idx, "Calibrated_Sub_Class"] = fixed_sub
-                df_fixed.at[idx, "Calibrated_Mix_Proportion"] = fixed_prop
-                changes.append({
-                    "BUILDINGSTRUCTUREID": building_id,
-                    "Calibrated_Main_Class": main_cls,
-                    "Old_Calibrated_Sub_Class": old_sub,
-                    "New_Calibrated_Sub_Class": fixed_sub,
-                    "Calibrated_Mix_Proportion": fixed_prop
-                })
-            continue
-
-        if is_mixed_main_class(main_cls):
-            continue
-
-        dominant_sub = dominant_subclass_from_vector(mix_prop)
-        if dominant_sub is None:
-            continue
-
-        dominant_sub = normalize_label(dominant_sub)
-
-        if old_sub != dominant_sub:
-            df_fixed.at[idx, "Calibrated_Sub_Class"] = dominant_sub
-            changes.append({
-                "BUILDINGSTRUCTUREID": building_id,
-                "Calibrated_Main_Class": main_cls,
-                "Old_Calibrated_Sub_Class": old_sub,
-                "New_Calibrated_Sub_Class": dominant_sub,
-                "Calibrated_Mix_Proportion": mix_prop
-            })
-
-    changed_df = pd.DataFrame(changes)
-    print(f"[INFO] Subclass consistency repairs applied: {len(changed_df)}")
-    return df_fixed, changed_df
-
-def qa_subclass_consistency(df: pd.DataFrame):
-    issues = []
-
-    for _, row in df.iterrows():
-        main_cls = row.get("Calibrated_Main_Class", "")
-        if is_non_assessed_main_class(main_cls):
-            current_sub = normalize_label(row.get("Calibrated_Sub_Class", ""))
-            expected_sub = normalize_label(canonical_non_assessed_subclass(row))
-            expected_prop = normalize_label(f"{expected_sub}:1.00")
-            current_prop = normalize_label(row.get("Calibrated_Mix_Proportion", ""))
-            if current_sub != expected_sub or current_prop != expected_prop:
-                issues.append({
-                    "BUILDINGSTRUCTUREID": row.get("BUILDINGSTRUCTUREID", None),
-                    "Calibrated_Main_Class": main_cls,
-                    "Calibrated_Sub_Class": current_sub,
-                    "Dominant_From_Vector": expected_sub,
-                    "Calibrated_Mix_Proportion": row.get("Calibrated_Mix_Proportion", "")
-                })
-            continue
-
-        if is_mixed_main_class(main_cls):
-            continue
-
-        current_sub = normalize_label(row.get("Calibrated_Sub_Class", ""))
-        dominant_sub = dominant_subclass_from_vector(row.get("Calibrated_Mix_Proportion", ""))
-
-        if dominant_sub is None:
-            continue
-
-        dominant_sub = normalize_label(dominant_sub)
-
-        if current_sub != dominant_sub:
-            issues.append({
-                "BUILDINGSTRUCTUREID": row.get("BUILDINGSTRUCTUREID", None),
-                "Calibrated_Main_Class": main_cls,
-                "Calibrated_Sub_Class": current_sub,
-                "Dominant_From_Vector": dominant_sub,
-                "Calibrated_Mix_Proportion": row.get("Calibrated_Mix_Proportion", "")
-            })
-
-    return pd.DataFrame(issues)
-
-def enforce_public_non_assessed_fields(public_df: pd.DataFrame) -> pd.DataFrame:
-    required_cols = [
-        "UBEM_Main_Class_主类别",
-        "UBEM_Sub_Class_子类别",
-        "UBEM_Mixed_Proportions_混合比例",
-    ]
-    if not all(col in public_df.columns for col in required_cols):
-        return public_df
-
-    df = public_df.copy()
-    non_mask = df["UBEM_Main_Class_主类别"].apply(is_non_assessed_main_class)
-    if not non_mask.any():
-        return df
-
-    for idx, row in df.loc[non_mask].iterrows():
-        fixed_sub = canonical_non_assessed_subclass(row)
-        df.at[idx, "UBEM_Sub_Class_子类别"] = fixed_sub
-        df.at[idx, "UBEM_Mixed_Proportions_混合比例"] = f"{fixed_sub}:1.00"
-
-    return df
-
-
-def _read_geojson_quiet(path, **kwargs):
-    # Suppress noisy GDAL/OGR stderr warnings for unsupported non-scalar fields.
-    err_buffer = io.StringIO()
-    with redirect_stderr(err_buffer):
-        return gpd.read_file(path, **kwargs)
-
-
-def _write_geojson_quiet(gdf, path):
-    # Suppress noisy GDAL/OGR stderr warnings for unsupported non-scalar fields.
-    err_buffer = io.StringIO()
-    with redirect_stderr(err_buffer):
-        gdf.to_file(path, driver='GeoJSON')
-
-
-def load_and_scan_data():
-    if not os.path.exists(INPUT_CSV) or not os.path.exists(INPUT_GEOJSON):
-        print("[ERROR] Step 9 outputs are missing. Run step 9 before step 10.")
-        sys.exit(1)
-
-    df = pd.read_csv(INPUT_CSV, low_memory=False)
-    gdf = _read_geojson_quiet(INPUT_GEOJSON)
-    if 'BUILDINGSTRUCTUREID' in gdf.columns:
-        gdf = gdf[['BUILDINGSTRUCTUREID', 'geometry']].copy()
-    else:
-        gdf = gdf[['geometry']].copy()
-        gdf['BUILDINGSTRUCTUREID'] = ""
-
-    if 'BUILDINGSTRUCTUREID' in df.columns:
-        df['BUILDINGSTRUCTUREID'] = df['BUILDINGSTRUCTUREID'].apply(normalize_id)
-    if 'BUILDINGSTRUCTUREID' in gdf.columns:
-        gdf['BUILDINGSTRUCTUREID'] = gdf['BUILDINGSTRUCTUREID'].apply(normalize_id)
-
-    if 'SHAPE_Area' not in df.columns:
-        df['SHAPE_Area'] = gdf.area
-
-    if 'Calibrated_Main_Class' in df.columns:
-        df['Calibrated_Main_Class'] = df['Calibrated_Main_Class'].apply(canonicalize_main_label)
-
-    return df, gdf
-
-
-def generate_statistics(df):
-    total_buildings = len(df)
-    main_counts = df['Calibrated_Main_Class'].apply(canonicalize_main_label).value_counts()
-    mixed_df = df[df['Calibrated_Main_Class'].apply(is_mixed_main_class)]
-    _ = mixed_df['Calibrated_Mix_Proportion'].value_counts()
-
-    gfa_by_main = defaultdict(float)
-    gfa_by_sub = defaultdict(float)
-
-    for _, row in df.iterrows():
-        footprint = float(row.get('SHAPE_Area', 0))
-        floors = float(row.get('Estimated_Floors', 1))
-        if pd.isna(floors) or floors <= 0:
-            floors = 1
-
-        total_gfa = footprint * floors
-        mix_prop = str(row.get('Calibrated_Mix_Proportion', ''))
-
-        parsed = parse_proportion_string(mix_prop)
-
-        if not parsed:
-            sub = normalize_label(row.get('Calibrated_Sub_Class', '未知类别'))
-            main = SUB_TO_MAIN.get(sub, '未知类别')
-            gfa_by_sub[sub] += total_gfa
-            gfa_by_main[main] += total_gfa
-        else:
-            for sub, ratio in parsed.items():
-                main = SUB_TO_MAIN.get(sub, '未知类别')
-                split_gfa = total_gfa * ratio
-                gfa_by_sub[sub] += split_gfa
-                gfa_by_main[main] += split_gfa
-
-    total_gfa_all = sum(gfa_by_main.values()) or 1.0
-    _ = (total_buildings, main_counts, total_gfa_all, gfa_by_sub)
-
-
-def _to_safe_geojson_scalar(value):
-    if value is None:
-        return ""
-    if isinstance(value, (dict, list, tuple, set)):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return ""
-    return value
-
-
-def generate_public_dataset(df, gdf):
-    df_fixed, _ = repair_subclass_consistency(df)
-
-    qa_issues = qa_subclass_consistency(df_fixed)
-    if len(qa_issues) > 0:
-        print(f"[WARN] Subclass consistency issues detected: {len(qa_issues)}")
-
-    export_mapping = {
-        'BUILDINGSTRUCTUREID': 'Building_ID_建筑ID',
-        'SHAPE_Area': 'Footprint_Area_sqm_占地面积',
-        'Estimated_Floors': 'Floors_Count_地上层数',
-        'Estimated_Height': 'Height_m_建筑高度',
-
-        'Calibrated_Main_Class': 'UBEM_Main_Class_主类别',
-        'Calibrated_Sub_Class': 'UBEM_Sub_Class_子类别',
-        'Calibrated_Mix_Proportion': 'UBEM_Mixed_Proportions_混合比例',
-
-        'Calibrated_Source': 'Classification_Source_分类来源',
-        'Calibrated_Notes': 'Classification_Notes_分类备注',
-        'ML_Confidence': 'ML_Prediction_Confidence_机器学习置信度',
-        'proba_住宅类别': 'ML_Prob_Residential_住宅概率',
-        'proba_商业类别': 'ML_Prob_Commercial_商业概率',
-        'proba_工业类别': 'ML_Prob_Industrial_工业概率',
-
-        'BUILDINGSTRUCTURETYPE': 'LandsD_Structure_Type_地政署建筑类型',
-        'CATEGORY': 'LandsD_Category_地政署分类',
-        'STATUS': 'LandsD_Status_地政署状态',
-        'GROSSFLOORAREA': 'LandsD_Registered_GFA_地政署注册面积',
-        'BUILDINGNAMEEN': 'LandsD_Building_Name_EN_地政署英文名',
-        'BUILDINGNAMETC': 'LandsD_Building_Name_TC_地政署中文名',
-        'BDBIAR_OBJECTID': 'BDBIAR_Record_ID_屋宇署记录ID',
-        'BDBIAR_CLASS': 'BDBIAR_Classification_屋宇署分类',
-        'BDBIAR_AGE': 'BDBIAR_Building_Age_Year_屋宇署楼龄年份',
-        'distance_to_bdbiar': 'Dist_to_BDBIAR_m_距屋宇署点位距离',
-        'Matched_POIs': 'Crowdsourced_POIs_Matched_众包POI匹配详情',
-        'osmid': 'OSM_Record_ID_OSM记录ID',
-        'building': 'OSM_Building_Tag_OSM建筑标签',
-        'amenity': 'OSM_Amenity_Tag_OSM设施标签',
-        'shop': 'OSM_Shop_Tag_OSM商铺标签',
-        'OZP_ZONE_LABEL': 'OZP_Zone_Code_法定图则代码',
-        'OZP_DESC_ENG': 'OZP_Zone_Desc_EN_法定图则英文描述'
+from ai_cache import file_hash
+from classification import parse_weights, MAIN_CLASSES, MIXED, NONASSESSED, UNKNOWN, taxonomy, sub_label
+from config import (ML_FINAL_OUTPUT_PATH, PUBLIC_DATASET_CSV_PATH, PUBLIC_DATASET_GEOJSON_PATH,
+    OUTPUT_DIR, LEGACY_OUTPUT_DIR, FILE_PATHS_LANDSD, INTERMEDIATE_DIR)
+from data_quality import ID, ids, numbers, require_unique
+from stage_io import read_table, attach_geometry
+from utils import sanitize_dataframe_for_geojson
+
+EXPORT_MAPPING = {
+    ID:'Building_ID_建筑ID','SHAPE_Area':'Footprint_Area_sqm_占地面积',
+    'Estimated_Floors':'Floors_Count_地上层数','Estimated_Height':'Height_m_建筑高度',
+    'Calibrated_Main_Class':'UBEM_Main_Class_主类别','Calibrated_Sub_Class':'UBEM_Sub_Class_子类别',
+    'Calibrated_Mix_Proportion':'UBEM_Mixed_Proportions_混合比例',
+    'Calibrated_Source':'Classification_Source_分类来源','Calibrated_Notes':'Classification_Notes_分类备注',
+    'ML_Confidence':'ML_Prediction_Confidence_机器学习置信度',
+    'proba_Residential_住宅类别':'ML_Prob_Residential_住宅概率',
+    'proba_Commercial_商业类别':'ML_Prob_Commercial_商业概率','proba_Industrial_工业类别':'ML_Prob_Industrial_工业概率',
+    'BUILDINGSTRUCTURETYPE':'LandsD_Structure_Type_地政署建筑类型','CATEGORY':'LandsD_Category_地政署分类',
+    'STATUS':'LandsD_Status_地政署状态','GROSSFLOORAREA':'LandsD_Registered_GFA_地政署注册面积',
+    'BUILDINGNAMEEN':'LandsD_Building_Name_EN_地政署英文名','BUILDINGNAMETC':'LandsD_Building_Name_TC_地政署中文名',
+    'BDBIAR_OBJECTID':'BDBIAR_Record_ID_屋宇署记录ID','BDBIAR_CLASS':'BDBIAR_Classification_屋宇署分类',
+    'BDBIAR_AGE':'BDBIAR_Building_Age_Year_屋宇署楼龄年份','distance_to_bdbiar':'Dist_to_BDBIAR_m_距屋宇署点位距离',
+    'Matched_POIs':'Crowdsourced_POIs_Matched_众包POI匹配详情','osmid':'OSM_Record_ID_OSM记录ID',
+    'building':'OSM_Building_Tag_OSM建筑标签','amenity':'OSM_Amenity_Tag_OSM设施标签','shop':'OSM_Shop_Tag_OSM商铺标签',
+    'OZP_ZONE_LABEL':'OZP_Zone_Code_法定图则代码','OZP_DESC_ENG':'OZP_Zone_Desc_EN_法定图则英文描述'}
+PROVENANCE = ['BUILDINGCSUID','NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT','Source_Footprint_Area_sqm','Geometry_Quality',
+    'Footprint_Area_QA','Duplicate_Footprint_Geometry','Height_Source','Height_Quality','Height_Terrain_QA',
+    'Floors_Source','Floors_Quality','Floors_Height_Proxy','Floor_Height_Proxy_Assumption_m',
+    'OSM_Height_m','OSM_Storeys','OSM_Storeys_Scope_QA','OSM_Dimension_Match_QA','OSM_Dimension_Object_ID','Terrain_Elevation_mPD',
+    'Height_Reference','Ground_To_Top_Height_m','Ground_Height_Source','Ground_Height_Quality',
+    'Height_Source_Comparison_QA','Component_Base_Above_Terrain_m',
+    'CSDI_Base_Elevation_mPD','CSDI_Top_Elevation_mPD','CSDI_Reported_Storeys','CSDI_Basement_Storeys',
+    'CSDI_Structure_Type','CSDI_Status','CSDI_Geometry_IoU','CSDI_Match_Quality',
+    'Structure_Use_Type','Structure_Use_Name','Structure_Use_Source','Structure_Use_Evidence','Structure_Use_Quality',
+    'Energy_Assessment_Scope','Pre_Structure_Review_Main_Class','Pre_Structure_Review_Sub_Class',
+    'Registered_GFA_sqm','Registered_GFA_Source','GFA_Proxy_sqm','GFA_Proxy_Method','GFA_Best_Available_sqm','GFA_Quality',
+    'Permit_IDs','Permit_GFA_Scope','Permit_GFA_Usable','GFA_DOMESTIC_SUM','GFA_NONDOMESTIC_SUM',
+    'Observed_Main_Area_Proportions','Observed_Residential_Area_Share','Observed_Nondomestic_Area_Share',
+    'Proportion_Method','Proportion_Quality','Functional_Subclasses','Functional_Main_Classes',
+    'Evidence_Subclass_Weights','Classification_QA','Function_Quality','ML_Decision_Status','ML_Subclass_Confidence','Subclass_Source',
+    'BDBIAR_Match_Quality','Geometry_Review_Status','LLM_Review_Status']
+
+
+def validate_release(frame):
+    require_unique(frame)
+    raw = pyogrio.read_dataframe(FILE_PATHS_LANDSD['BUILDING_STRUCTURE'],columns=[ID,'NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT'],read_geometry=False)
+    raw[ID] = ids(raw[ID])
+    require_unique(raw)
+    assert set(frame[ID]) == set(raw[ID]), 'Building IDs lost/added'
+    source = raw.set_index(ID).reindex(frame[ID])
+    for col in ['NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT']:
+        left,right = numbers(frame,col).to_numpy(),numbers(source,col).to_numpy()
+        assert np.isclose(left,right,equal_nan=True).all(), 'Raw field changed: '+col
+    assert frame.geometry.is_valid.all() and not frame.geometry.is_empty.any()
+    assert np.isclose(numbers(frame,'SHAPE_Area'),frame.geometry.area,atol=1e-5,rtol=1e-8).all()
+    height,floors = numbers(frame,'Estimated_Height'),numbers(frame,'Estimated_Floors')
+    assert height.dropna().between(0,600,inclusive='right').all()
+    assert floors.dropna().between(1,150).all() and np.isclose(floors.dropna(),floors.dropna().round()).all()
+    assert height[frame.Height_Quality.isin(['unknown','conflict_unresolved'])].isna().all()
+    assert floors[frame.Floors_Quality.isin(['unknown','conflict_unresolved'])].isna().all()
+    proxy = numbers(frame,'Floors_Height_Proxy')
+    assert np.isclose(proxy.dropna(),np.maximum(1,np.floor((height[proxy.notna()]/3).round(9)+.5))).all(), 'Optional height proxy disagrees with published height'
+    assert frame.loc[height.notna(),'Height_Source'].isin(['CSDI_top_minus_component_base','LandsD_top_minus_base']).all()
+    assert frame.loc[height.notna(),'Height_Reference'].eq('structure_base_to_top').all()
+    csdi = frame.Height_Source.eq('CSDI_top_minus_component_base')
+    assert frame.loc[csdi,'CSDI_Match_Quality'].eq('same_component_id_type_footprint').all()
+    assert np.isclose(height[csdi],numbers(frame.loc[csdi],'CSDI_Top_Elevation_mPD')-numbers(frame.loc[csdi],'CSDI_Base_Elevation_mPD')).all()
+    assert np.isclose(numbers(frame,'GFA_Proxy_sqm'),numbers(frame,'SHAPE_Area')*floors,equal_nan=True).all()
+    excluded = frame.Energy_Assessment_Scope.eq('excluded_nonbuilding_structure')
+    assert frame.loc[excluded,'Calibrated_Main_Class'].eq(NONASSESSED).all()
+    assert frame.loc[excluded,'GFA_Proxy_sqm'].isna().all() and floors[excluded].isna().all()
+    tall_small = numbers(frame,'SHAPE_Area').lt(150) & height.gt(150)
+    assert frame.loc[tall_small,'Structure_Use_Type'].eq('bridge_structure').all(), 'Unexplained small/tall component requires resolution'
+    ratio = (height/floors).dropna()
+    assert ratio.between(1,20).all(), 'Reported storeys have unresolved component scope'
+    assert frame.loc[floors.notna(),'Floors_Source'].isin(['CSDI_reported_storeys','LandsD_storeys','OSM_building_levels']).all()
+    for col in ['Registered_GFA_sqm','GFA_Proxy_sqm','GFA_Best_Available_sqm']:
+        values = numbers(frame,col).dropna()
+        assert (np.isfinite(values) & values.ge(0)).all(), 'Invalid floor area: '+col
+    probabilities = frame[['proba_'+main for main in MAIN_CLASSES]].to_numpy(dtype=float)
+    assert np.isfinite(probabilities).all() and ((probabilities>=0)&(probabilities<=1)).all()
+    assert np.isclose(probabilities.sum(axis=1),1,atol=1e-6).all(), 'Classifier probability mass is not conserved'
+    source_conflict = frame.ML_Decision_Status.eq('unresolved_source_conflict_unknown')
+    assert frame.loc[source_conflict,'Calibrated_Main_Class'].eq(UNKNOWN).all()
+    active_conflict = frame.Classification_QA.fillna('').str.contains('function_evidence_conflict|registered_area_function_conflict',regex=True)
+    assert not frame.loc[active_conflict,'Calibrated_Main_Class'].isin(MAIN_CLASSES).any(), 'Conflicting function published'
+    slender_unknown = frame.ML_Decision_Status.eq('slender_structure_function_unverified_unknown')
+    assert frame.loc[slender_unknown,'Calibrated_Main_Class'].eq(UNKNOWN).all()
+    validation_report = json.loads((Path(OUTPUT_DIR)/'model_validation.json').read_text(encoding='utf-8'))
+    permitted_main = [label for label,details in validation_report['deployment_class_gate']['classes'].items()
+                      if details['eligible_for_model_inference']]
+    inferred = frame.Calibrated_Source.eq('Machine_Learning_v2')
+    assert frame.loc[inferred,'Calibrated_Main_Class'].isin(permitted_main).all(), 'Unvalidated model main class published'
+    for parent,details in validation_report['subclass_models'].items():
+        permitted_children = [label for label,values in details.get('deployment_subclass_gate',{}).items()
+                              if values['eligible_for_model_inference']]
+        child_inferred = frame.Calibrated_Main_Class.eq(parent) & frame.Subclass_Source.eq('Machine_Learning_v2')
+        assert frame.loc[child_inferred,'Calibrated_Sub_Class'].isin(permitted_children).all(), 'Unvalidated model subclass published'
+    shared = frame.Permit_GFA_Scope.eq('shared_or_multiple_permits')
+    assert numbers(frame.loc[shared],'GFA_DOMESTIC_SUM').isna().all()
+    assert numbers(frame.loc[shared],'GFA_NONDOMESTIC_SUM').isna().all()
+    assert frame.Calibrated_Main_Class.isin(MAIN_CLASSES+[MIXED,NONASSESSED,UNKNOWN]).all()
+    invalid = []
+    for _,row in frame.iterrows():
+        vector = parse_weights(row.Calibrated_Mix_Proportion)
+        observed = parse_weights(row.Observed_Main_Area_Proportions)
+        if pd.notna(row.Calibrated_Mix_Proportion) and str(row.Calibrated_Mix_Proportion).strip() and not vector:
+            invalid.append(row[ID])
+        if pd.notna(row.Observed_Main_Area_Proportions) and str(row.Observed_Main_Area_Proportions).strip() and not observed:
+            invalid.append(row[ID])
+        if row.Calibrated_Main_Class in MAIN_CLASSES+[NONASSESSED] and row.Calibrated_Sub_Class != UNKNOWN:
+            assert taxonomy().get(row.Calibrated_Sub_Class)==row.Calibrated_Main_Class, 'Subclass parent mismatch: '+row[ID]
+        if vector and (abs(sum(vector.values())-1)>1e-6 or any(k not in taxonomy() for k in vector)):
+            invalid.append(row[ID])
+        if observed and (abs(sum(observed.values())-1)>1e-6 or any(k not in MAIN_CLASSES for k in observed)):
+            invalid.append(row[ID])
+    assert not invalid, 'Invalid quantitative vectors: '+str(invalid[:10])
+    return {'buildings':len(frame),'unique_ids':frame[ID].nunique(),'raw_dimensions_preserved':True,
+        'geometries_valid':True,'area_matches_geometry':True,'unsupported_height_source':0,
+        'unknown_height_records':int(height.isna().sum()),'unknown_floor_records':int(floors.isna().sum()),
+        'height_conflict_records':int(frame.Height_Quality.eq('conflict_unresolved').sum()),
+        'floor_conflict_records':int(frame.Floors_Quality.eq('conflict_unresolved').sum()),
+        'nonbuilding_structures_excluded_from_energy_area':int(excluded.sum()),
+        'shared_permit_not_allocated_records':int(shared.sum()),'invalid_proportion_vectors':0,
+        'model_inferences_respect_validation_gate':True,
+        'main_class_counts':frame.Calibrated_Main_Class.value_counts().to_dict(),
+        'height_quality_counts':frame.Height_Quality.value_counts().to_dict(),
+        'floor_quality_counts':frame.Floors_Quality.value_counts().to_dict()}
+
+
+def generate_public_dataset(frame):
+    columns = [c for c in list(EXPORT_MAPPING)+PROVENANCE if c in frame]
+    public = frame[columns].rename(columns=EXPORT_MAPPING).copy()
+    public['Dataset_Version'] = '2.0'
+    public['Unknown_Value_Policy'] = 'null_with_quality_and_source_flags'
+    # A nearest point is useful linkage evidence, not a verified building attribute.
+    point_usable = public.BDBIAR_Match_Quality.eq('inside_unique')
+    bdb_fields = [EXPORT_MAPPING['BDBIAR_CLASS'],EXPORT_MAPPING['BDBIAR_AGE']]
+    withheld_point_attributes = public.loc[~point_usable,bdb_fields].notna().sum().to_dict()
+    public.loc[~point_usable,bdb_fields] = np.nan
+    assert public.loc[~point_usable,bdb_fields].isna().all().all()
+    area,height,floors = (public['Footprint_Area_sqm_占地面积'],public['Height_m_建筑高度'],public['Floors_Count_地上层数'])
+    flags = {
+        'small_footprint_tall_building':(area<150)&(height>150),
+        'component_height_below_2m':height.notna()&(height<2),
+        'component_base_differs_point_terrain_over_3m':public.Component_Base_Above_Terrain_m.abs().gt(3),
+        'height_storeys_ratio_outside_2_to_8_m':height.notna()&floors.notna()&~(height/floors).between(2,8),
+        'height_sources_conflict':public.Height_Quality.eq('conflict_unresolved'),
+        'storeys_sources_conflict':public.Floors_Quality.eq('conflict_unresolved'),
+        'component_storeys_scope_unresolved':public.Floors_Source.eq('component_storeys_scope_unresolved'),
+        'csdi_id_matched_but_component_geometry_changed':public.CSDI_Match_Quality.isin(['invalid_source_geometry','structure_type_mismatch','footprint_changed']),
+        'OSM_component_height_reference_difference':public.Height_Source_Comparison_QA.fillna('').ne(''),
+        'ground_height_sources_conflict':public.Ground_Height_Quality.eq('conflict_unresolved'),
+        'top_minus_terrain_rejected':public.Height_Terrain_QA.fillna('').ne(''),
+        'registered_vs_uniform_floorplate_factor_over_3':public.Registered_GFA_sqm.notna()&public.GFA_Proxy_sqm.notna()&
+            ((public.Registered_GFA_sqm/public.GFA_Proxy_sqm>3)|(public.GFA_Proxy_sqm/public.Registered_GFA_sqm>3)),
+        'duplicate_footprint_geometry':public.Duplicate_Footprint_Geometry.astype(str).str.lower().eq('true'),
+        'slender_structure_function_unverified':public.ML_Decision_Status.eq('slender_structure_function_unverified_unknown'),
     }
-
-    export_columns_order = [
-        'Building_ID_建筑ID',
-        'Footprint_Area_sqm_占地面积',
-        'Floors_Count_地上层数',
-        'Height_m_建筑高度',
-
-        'UBEM_Main_Class_主类别',
-        'UBEM_Sub_Class_子类别',
-        'UBEM_Mixed_Proportions_混合比例',
-
-        'Classification_Source_分类来源',
-        'Classification_Notes_分类备注',
-
-        'ML_Prediction_Confidence_机器学习置信度',
-        'ML_Prob_Residential_住宅概率',
-        'ML_Prob_Commercial_商业概率',
-        'ML_Prob_Industrial_工业概率',
-
-        'LandsD_Structure_Type_地政署建筑类型',
-        'LandsD_Category_地政署分类',
-        'LandsD_Status_地政署状态',
-        'LandsD_Registered_GFA_地政署注册面积',
-        'LandsD_Building_Name_EN_地政署英文名',
-        'LandsD_Building_Name_TC_地政署中文名',
-
-        'BDBIAR_Record_ID_屋宇署记录ID',
-        'BDBIAR_Classification_屋宇署分类',
-        'BDBIAR_Building_Age_Year_屋宇署楼龄年份',
-        'Dist_to_BDBIAR_m_距屋宇署点位距离',
-
-        'Crowdsourced_POIs_Matched_众包POI匹配详情',
-        'OSM_Record_ID_OSM记录ID',
-        'OSM_Building_Tag_OSM建筑标签',
-        'OSM_Amenity_Tag_OSM设施标签',
-        'OSM_Shop_Tag_OSM商铺标签',
-
-        'OZP_Zone_Code_法定图则代码',
-        'OZP_Zone_Desc_EN_法定图则英文描述'
-    ]
-
-    df_renamed = df_fixed.rename(columns=export_mapping)
-    final_cols = [c for c in export_columns_order if c in df_renamed.columns]
-    public_df = df_renamed[final_cols].copy()
-
-    if 'UBEM_Main_Class_主类别' in public_df.columns:
-        public_df['UBEM_Main_Class_主类别'] = (
-            public_df['UBEM_Main_Class_主类别']
-            .map(MAIN_CLASS_DICT)
-            .fillna(public_df['UBEM_Main_Class_主类别'])
-        )
-
-    if 'UBEM_Sub_Class_子类别' in public_df.columns:
-        public_df['UBEM_Sub_Class_子类别'] = public_df['UBEM_Sub_Class_子类别'].apply(patch_orphan_subclass_label)
-        public_df['UBEM_Sub_Class_子类别'] = public_df['UBEM_Sub_Class_子类别'].apply(apply_release_label_patches)
-
-    if 'UBEM_Mixed_Proportions_混合比例' in public_df.columns:
-        public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(translate_mix_prop)
-        public_df['UBEM_Mixed_Proportions_混合比例'] = public_df['UBEM_Mixed_Proportions_混合比例'].apply(apply_release_label_patches)
-
-    public_df = enforce_public_non_assessed_fields(public_df)
-
-    public_df.to_csv(PUBLIC_CSV, index=False, encoding='utf-8-sig')
-    print(f"[INFO] Public CSV exported: {PUBLIC_CSV}")
-
-    gdf_merge = gdf[['BUILDINGSTRUCTUREID', 'geometry']].copy()
-    gdf_merge['_merge_id'] = gdf_merge['BUILDINGSTRUCTUREID'].apply(normalize_id)
-
-    public_df_geo = public_df.copy()
-    public_df_geo['_merge_id'] = public_df_geo['Building_ID_建筑ID'].apply(normalize_id)
-
-    public_gdf = gdf_merge.merge(
-        public_df_geo,
-        on='_merge_id',
-        how='inner'
-    )
-
-    public_gdf.drop(columns=['BUILDINGSTRUCTUREID', '_merge_id'], inplace=True, errors='ignore')
-
-    for col in public_gdf.columns:
-        if col != 'geometry' and public_gdf[col].dtype == object:
-            public_gdf[col] = public_gdf[col].apply(_to_safe_geojson_scalar)
-            public_gdf[col] = public_gdf[col].fillna('').astype(str).replace('nan', '')
-
-    _write_geojson_quiet(public_gdf, PUBLIC_GEOJSON)
-    print(f"[INFO] Public GeoJSON exported: {PUBLIC_GEOJSON}")
-
-    readme_text = """
-HK_UBEM_Buildings_Public_v1_1 Dataset
-------------------------------------------------------------
-This dataset provides a highly granular, 3D-enriched, and semantically calibrated
-building stock model for Hong Kong, designed specifically for Urban Building
-Energy Modeling (UBEM) and morphological studies. All attributes and records
-are fully bilingual (English & Chinese) to ensure international accessibility.
-
-[Data Column Order & Dictionary]
-1. Basic & Spatial Info (基础与空间特征)
-- Building_ID_建筑ID               : Unique building identifier from LandsD.
-- Footprint_Area_sqm_占地面积      : Building footprint area in square meters.
-- Floors_Count_地上层数            : Number of above-ground floors.
-- Height_m_建筑高度                : 3D building height in meters.
-
-2. UBEM Classification Results (UBEM 分类结论 - 核心输出)
-- UBEM_Main_Class_主类别          : Standardized main functional class.
-- UBEM_Sub_Class_子类别           : Dominant sub-functional class for non-mixed records.
-- UBEM_Mixed_Proportions_混合比例 : Precise volumetric proportion vector.
-
-3. Classification Reasoning (分类依据与算法溯源)
-- Classification_Source_分类来源 : Evidence source (Rule Engine / ML Calibrated / LLM Verified).
-- Classification_Notes_分类备注  : Detailed reasoning logic behind the algorithm.
-- ML_Prediction_Confidence_机器学习置信度 : Confidence score from the LightGBM model.
-
-4. Raw Evidences (五大开源多模态证据库溯源)
-- LandsD_xxx        : Base geometric & land use records from the Lands Department.
-- BDBIAR_xxx        : Semantic and building age records from the Buildings Department.
-- Crowdsourced_POIs_Matched_众包POI匹配详情 :
-  Crowdsourced POI trace aligned with the released proportioning basis.
-  For rule-engine-derived commercial proportioning cases, this field reflects
-  the POIs effectively used to support the released subclass proportion vector.
-- OSM_xxx           : Tag details from OpenStreetMap.
-- OZP_xxx           : Outline Zoning Plan codes from the Town Planning Board.
-
-[Coordinate System]
-EPSG:2326 (Hong Kong 1980 Grid).
-"""
-    _ = readme_text
+    public['Physical_Review_Flags'] = [';'.join(key for key,mask in flags.items() if bool(mask.iloc[i])) for i in range(len(public))]
+    resolved_bridge = public.Structure_Use_Type.eq('bridge_structure') & flags['small_footprint_tall_building']
+    public['Small_Tall_Resolution'] = np.where(resolved_bridge,'identified_bridge_pylon_height_retained_energy_area_excluded',
+        np.where(flags['small_footprint_tall_building'],'unresolved','not_triggered'))
+    summary={'thresholds_are_review_triggers_not_error_proofs':True,'records':len(public),
+        'flag_counts':{key:int(mask.sum()) for key,mask in flags.items()},
+        'distinct_flagged_records':int(public.Physical_Review_Flags.ne('').sum()),
+        'height_rounded_to_15m_records':int(height.round(1).eq(15).sum()),
+        'primary_height_definition':'structure_base_to_top; ground height is separate',
+        'csdi_match_quality_counts':public.CSDI_Match_Quality.value_counts().to_dict(),
+        'ground_height_known_records':int(public.Ground_To_Top_Height_m.notna().sum()),
+        'small_tall_identified_bridge_structures':int(resolved_bridge.sum()),
+        'small_tall_unresolved_records':int((flags['small_footprint_tall_building'] & ~resolved_bridge).sum()),
+        'nonunique_or_outside_point_attributes_withheld':withheld_point_attributes,
+        'height_rounded_to_15m_by_source':public.loc[height.round(1).eq(15),'Height_Source'].value_counts().to_dict()}
+    (Path(OUTPUT_DIR)/'dimension_qa_summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+    public.drop(columns='geometry',errors='ignore').to_csv(PUBLIC_DATASET_CSV_PATH,index=False,encoding='utf-8-sig')
+    geometry = gpd.GeoDataFrame(public,geometry=frame.geometry,crs=frame.crs)
+    sanitize_dataframe_for_geojson(geometry).to_file(PUBLIC_DATASET_GEOJSON_PATH,driver='GeoJSON',AUTODETECT_JSON_STRINGS='NO')
+    geometry.to_parquet(Path(PUBLIC_DATASET_CSV_PATH).with_suffix('.parquet'),index=False)
+    return public
 
 
-class Logger(object):
-    def __init__(self, filename="Default.log"):
-        self.terminal = sys.stdout
-        self.log = open(filename, "w", encoding="utf-8")
-
-    def write(self, message):
-        self.terminal.write(message)
-        if '\r' not in message:
-            self.log.write(message)
-            self.log.flush()
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
-
-    def isatty(self):
-        return True
+def proportion_values_equal(a,b):
+    first,second = parse_weights(a),parse_weights(b)
+    if any(pd.notna(value) and str(value).strip() and not parsed for value,parsed in [(a,first),(b,second)]):
+        return False
+    def canonical(vector):
+        result={}
+        for key,value in vector.items():
+            label=sub_label(key)
+            label=key if label==UNKNOWN else label
+            result[label]=result.get(label,0.)+value
+        return result
+    first,second=canonical(first),canonical(second)
+    return first.keys()==second.keys() and all(np.isclose(first[key],second[key],atol=1e-6,rtol=1e-6) for key in first)
 
 
-if __name__ == "__main__":
-    log_file_path = os.path.join(LOG_DIR, "10.final_statistics_report.txt")
-    sys.stdout = Logger(log_file_path)
-    sys.stderr = sys.stdout
+def compare_releases(public):
+    path = Path(LEGACY_OUTPUT_DIR)/'HK_UBEM_Buildings_Public_v1_1.csv'
+    old = pd.read_csv(path,low_memory=False,dtype={'Building_ID_建筑ID':'string'}).set_index('Building_ID_建筑ID')
+    new = public.set_index('Building_ID_建筑ID').reindex(old.index)
+    assert set(public['Building_ID_建筑ID']) == set(old.index)
+    comparison = pd.DataFrame(index=old.index)
+    flags = {}
+    for col,alias in [('Footprint_Area_sqm_占地面积','Footprint_Area'),('Height_m_建筑高度','Height_m'),
+                      ('Floors_Count_地上层数','Floors'),('UBEM_Main_Class_主类别','Main_Class'),
+                      ('UBEM_Sub_Class_子类别','Sub_Class'),('UBEM_Mixed_Proportions_混合比例','Use_Proportions')]:
+        a,b = old[col],new[col]
+        comparison['Old_'+alias],comparison['New_'+alias] = a,b
+        if alias in ['Footprint_Area','Height_m','Floors']:
+            changed = ~np.isclose(pd.to_numeric(a,errors='coerce'),pd.to_numeric(b,errors='coerce'),equal_nan=True,rtol=1e-8,atol=1e-6)
+        elif alias=='Use_Proportions':
+            comparison['Use_Proportions_Text_Changed']=a.fillna('').ne(b.fillna('')).to_numpy()
+            changed=np.array([not proportion_values_equal(x,y) for x,y in zip(a,b)])
+        else:
+            changed = a.fillna('').ne(b.fillna('')).to_numpy()
+        comparison[alias+'_Changed'] = changed
+        flags[alias] = int(np.sum(changed))
+    old_proxy = pd.to_numeric(old['Footprint_Area_sqm_占地面积'],errors='coerce')*pd.to_numeric(old['Floors_Count_地上层数'],errors='coerce')
+    comparison['Old_GFA_Proxy_sqm'] = old_proxy
+    for col in ['Height_Source','Height_Quality','Floors_Source','Floors_Quality','Proportion_Method','Proportion_Quality',
+                'GFA_Best_Available_sqm','GFA_Quality','Registered_GFA_sqm','GFA_Proxy_sqm','Classification_QA','Geometry_Review_Status']:
+        comparison['New_'+col] = new[col]
+    comparison['Height_Withheld_Unknown'] = new['Height_m_建筑高度'].isna()
+    comparison['Floors_Withheld_Unknown'] = new['Floors_Count_地上层数'].isna()
+    comparison.to_csv(Path(OUTPUT_DIR)/'v1_1_to_v2_building_changes.csv',encoding='utf-8-sig')
+    matrix = pd.crosstab(old['UBEM_Main_Class_主类别'],new['UBEM_Main_Class_主类别'])
+    matrix.to_csv(Path(OUTPUT_DIR)/'v1_1_to_v2_class_transition.csv',encoding='utf-8-sig')
+    known_gfa = new.GFA_Best_Available_sqm.notna()
+    height_known = new['Height_m_建筑高度'].notna()
+    summary = {'buildings':len(public),'id_set_unchanged':True,'changed':flags,
+        'old_height_known':int(old['Height_m_建筑高度'].notna().sum()),'new_height_known':int(height_known.sum()),
+        'old_floor_known':int(old['Floors_Count_地上层数'].notna().sum()),'new_floor_known':int(new['Floors_Count_地上层数'].notna().sum()),
+        'old_default_height_not_replaced_by_another_constant':True,
+        'new_main_class_counts':public['UBEM_Main_Class_主类别'].value_counts().to_dict(),
+        'new_height_source_counts':public.Height_Source.value_counts().to_dict(),
+        'old_gfa_proxy_all_records_sqm':float(old_proxy.sum()),'new_gfa_known_records':int(known_gfa.sum()),
+        'new_gfa_best_available_covered_records_sqm':float(new.GFA_Best_Available_sqm.sum()),
+        'old_gfa_proxy_on_same_new_covered_ids_sqm':float(old_proxy[known_gfa].sum()),
+        'gfa_comparison_caution':'Coverage changed. These sums are not estimates of a physical change in Hong Kong total GFA.',
+        'height_delta_median_on_common_known_ids_m':float((new.loc[height_known,'Height_m_建筑高度']-old.loc[height_known,'Height_m_建筑高度']).median()),
+        'old_release_sha256':file_hash(path)}
+    (Path(OUTPUT_DIR)/'comparison_summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+    compare_all_common_fields(old,new)
+    return old,new,summary
 
-    try:
-        print(f"[INFO] Logging to: {log_file_path}")
-        print("[INFO] Step 10 started: final public dataset export")
-        df, gdf = load_and_scan_data()
-        generate_public_dataset(df, gdf)
-        print("[INFO] Step 10 completed.")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+
+def compare_all_common_fields(old,new):
+    """Cover every original CSV field, including point attributes and probabilities."""
+    summaries,changes = [],[]
+    for col in old.columns.intersection(new.columns):
+        a,b = old[col],new[col]
+        if col == EXPORT_MAPPING['Calibrated_Mix_Proportion']:
+            changed = np.array([not proportion_values_equal(x,y) for x,y in zip(a,b)])
+            policy = 'canonical_labels_and_numeric_shares'
+        elif pd.api.types.is_numeric_dtype(a) and pd.api.types.is_numeric_dtype(b):
+            changed = ~np.isclose(a.to_numpy(dtype=float,na_value=np.nan),b.to_numpy(dtype=float,na_value=np.nan),equal_nan=True,atol=1e-6,rtol=1e-8)
+            policy = 'numeric_tolerance_1e-6_absolute_1e-8_relative'
+        else:
+            changed = a.fillna('').astype(str).ne(b.fillna('').astype(str)).to_numpy()
+            policy = 'literal_text_or_categorical'
+        summaries.append({'field':col,'old_nonmissing':int(a.notna().sum()),'new_nonmissing':int(b.notna().sum()),
+            'changed_records':int(changed.sum()),'newly_withheld_nulls':int((a.notna()&b.isna()).sum()),
+            'previously_null_filled':int((a.isna()&b.notna()).sum()),'comparison_policy':policy})
+        if changed.any():
+            changes.append(pd.DataFrame({'Building_ID_建筑ID':old.index[changed],'field':col,
+                'old_value':a.loc[changed].astype('string').to_numpy(),
+                'new_value':b.loc[changed].astype('string').to_numpy()}).astype('string'))
+    pd.DataFrame(summaries).to_csv(Path(OUTPUT_DIR)/'all_common_field_change_summary.csv',index=False,encoding='utf-8-sig')
+    table = pd.concat(changes,ignore_index=True) if changes else pd.DataFrame(columns=['Building_ID_建筑ID','field','old_value','new_value']).astype('string')
+    table.to_parquet(Path(OUTPUT_DIR)/'all_common_field_changes.parquet',index=False)
+
+
+def create_review_tables(public):
+    frame = public.copy()
+    unresolved = frame.Height_Quality.isin(['unknown','conflict_unresolved']) | frame.Floors_Quality.isin(['unknown','conflict_unresolved'])
+    unresolved |= frame['UBEM_Main_Class_主类别'].eq(UNKNOWN) | frame.Proportion_Quality.eq('unknown')
+    unresolved |= frame.Physical_Review_Flags.ne('') | frame.Classification_QA.fillna('').ne('')
+    cols = ['Building_ID_建筑ID','Height_m_建筑高度','Floors_Count_地上层数','Height_Source','Height_Quality',
+        'Height_Reference','Ground_To_Top_Height_m','CSDI_Match_Quality',
+        'Floors_Source','Floors_Quality','UBEM_Main_Class_主类别','UBEM_Sub_Class_子类别','Classification_QA','Geometry_Review_Status','Physical_Review_Flags']
+    frame.loc[unresolved,cols].to_csv(Path(OUTPUT_DIR)/'unresolved_building_review_queue.csv',index=False,encoding='utf-8-sig')
+    frame['_terrain_band'] = pd.cut(frame.Terrain_Elevation_mPD,[-np.inf,10,100,300,np.inf],labels=['low','medium','high','mountain']).astype('string').fillna('unknown')
+    frame['_area_band'] = pd.cut(frame['Footprint_Area_sqm_占地面积'],[0,50,150,1000,np.inf],labels=['tiny','small','medium','large']).astype('string')
+    frame['_flagged'] = unresolved
+    samples = []
+    for _,group in frame.groupby(['Height_Source','_terrain_band','_area_band','UBEM_Main_Class_主类别','_flagged'],observed=True,dropna=False):
+        samples.append(group.sample(min(2,len(group)),random_state=42))
+    sample = pd.concat(samples).drop_duplicates('Building_ID_建筑ID')
+    for field in ['Independently_Verified_Height_m','Independently_Verified_Storeys','Independently_Verified_Function','Evidence_URL','Reviewer_Notes']:
+        sample[field] = ''
+    sample.to_csv(Path(OUTPUT_DIR)/'stratified_manual_validation_template.csv',index=False,encoding='utf-8-sig')
+    cases = public[public['Building_ID_建筑ID'].isin(['181189','170369','192326','87318'])]
+    cases.to_csv(Path(OUTPUT_DIR)/'reader_cases_v2.csv',index=False,encoding='utf-8-sig')
+
+
+def make_figures(old,new):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    directory = Path(OUTPUT_DIR)/'figures'
+    directory.mkdir(exist_ok=True)
+    fig,axes = plt.subplots(1,2,figsize=(12,4.5))
+    height_bins = np.arange(0,max(old['Height_m_建筑高度'].max(),new['Height_m_建筑高度'].max())+20,10)
+    floor_bins = np.arange(0,max(old['Floors_Count_地上层数'].max(),new['Floors_Count_地上层数'].max())+6,3)
+    for data,label in [(old,'v1.1'),(new,'v2 known values')]:
+        axes[0].hist(data['Height_m_建筑高度'].dropna(),bins=height_bins,histtype='step',label=label)
+        axes[1].hist(data['Floors_Count_地上层数'].dropna(),bins=floor_bins,histtype='step',label=label)
+    for ax,title in zip(axes,['Height (m); missing values excluded','Reported storeys; v2 unknown values excluded']):
+        ax.set_title(title);ax.set_yscale('log');ax.set_ylabel('Buildings');ax.legend()
+    fig.tight_layout();fig.savefig(directory/'dimensions_before_after.png',dpi=180);plt.close(fig)
+    fig,ax = plt.subplots(figsize=(8,4.5))
+    labels = ['Height','Storeys','GFA best available']
+    counts = [new['Height_m_建筑高度'].notna().sum(),new['Floors_Count_地上层数'].notna().sum(),new.GFA_Best_Available_sqm.notna().sum()]
+    ax.bar(labels,counts,label='Known/reported/explicit estimate')
+    ax.bar(labels,[len(new)-n for n in counts],bottom=counts,label='Unknown',color='#b8bec9')
+    ax.set_ylabel('Buildings');ax.set_title('v2 coverage; estimates retain method flags');ax.legend()
+    fig.tight_layout();fig.savefig(directory/'coverage_and_unknowns.png',dpi=180);plt.close(fig)
+    model=json.loads((Path(OUTPUT_DIR)/'model_validation.json').read_text(encoding='utf-8'))
+    fig,ax=plt.subplots(figsize=(6,5))
+    matrix=np.array(model['confusion_matrix'])
+    image=ax.imshow(matrix,cmap='Blues');fig.colorbar(image,ax=ax)
+    names=[name.split('_')[0] for name in model['class_order']]
+    ax.set_xticks(range(3),names,rotation=20);ax.set_yticks(range(3),names)
+    for i in range(3):
+        for j in range(3):ax.text(j,i,str(matrix[i,j]),ha='center',va='center')
+    ax.set_xlabel('Prediction');ax.set_ylabel('Source-inferred label');ax.set_title('Spatial holdout before deployment gates\nWeak source labels')
+    fig.tight_layout();fig.savefig(directory/'model_spatial_validation.png',dpi=180);plt.close(fig)
+
+
+def write_documentation(public,validation,comparison):
+    meanings = {
+        'Height_m_建筑高度':'Structural component top minus base elevation; towers and podiums remain separate; not architectural spire height',
+        'Height_Source':'CSDI matched component top-minus-base, native top-minus-base, missing or conflict',
+        'Height_Reference':'structure_base_to_top for known primary heights; never a terrain/OSM substitute',
+        'Height_Quality':'Source-reported component elevations; not independent height measurements',
+        'Ground_To_Top_Height_m':'Separate datum top minus point terrain estimate, otherwise comparable OSM reported ground height with unverified reference',
+        'Ground_Height_Source':'CSDI/LandsD top minus point DTM, OSM reported height with reference unverified, missing or conflict',
+        'Ground_Height_Quality':'Point terrain estimate or reported reference unverified; never silently a component height',
+        'Component_Base_Above_Terrain_m':'Component base elevation minus sampled terrain; raised podium bases and sampling errors both possible',
+        'CSDI_Geometry_IoU':'Footprint intersection/union after reprojection; >=0.95 required for donation, local footprint retained',
+        'CSDI_Match_Quality':'Exact unique BuildingCSUID, compatible structure type and valid footprint IoU >=0.95; otherwise attributes not used',
+        'CSDI_Base_Elevation_mPD':'CSDI raw component base elevation in Hong Kong Principal Datum; may be a podium roof',
+        'CSDI_Top_Elevation_mPD':'CSDI raw component top elevation in Hong Kong Principal Datum; spire/antenna conventions may differ',
+        'CSDI_Reported_Storeys':'Original source-reported storeys, including withheld conflicts; not inferred from height',
+        'Floors_Source':'Reported CSDI/LandsD/OSM storeys only; height/3 is never used here',
+        'Structure_Use_Type':'Explicitly matched structural use: bridge, equipment or water-storage structure; empty is not reviewed/identified',
+        'Structure_Use_Name':'Documented landmark/component name; original LandsD name is not overwritten',
+        'Structure_Use_Source':'Official document plus spatial identification, or comparable unique OSM polygon with explicit structural tags',
+        'Structure_Use_Evidence':'Official factsheet or exact source OSM object URL supporting structural-use identification, not a new height survey',
+        'Structure_Use_Quality':'Scope/strength of structural-use evidence; OSM tags alone are not independently verified measurements',
+        'Energy_Assessment_Scope':'Identified nonbuilding structures are excluded from floors/GFA energy allocation; other rows may still require use evidence',
+        'Small_Tall_Resolution':'Eight tall small-footprint cases identified as bridge pylons; physical heights retained, not modeled as occupied buildings',
+        'Pre_Structure_Review_Main_Class':'Main function before explicit structural-use review, for traceability',
+        'Pre_Structure_Review_Sub_Class':'Subclass before explicit structural-use review, for traceability',
+        'Floors_Height_Proxy':'Optional height/3 m estimate, nearest integer with half ties upward (ratio normalized to 9 decimals); excluded from reported storeys and GFA',
+        'GFA_Proxy_sqm':'Geometric footprint times reported storeys; uniform floorplate assumption',
+        'Registered_GFA_sqm':'Positive structure registration, otherwise uniquely scoped single-structure permit total',
+        'GFA_Best_Available_sqm':'Registered GFA preferred, otherwise uniform-floorplate proxy; compare with coverage',
+        'Observed_Main_Area_Proportions':'Scoped registered domestic/nondomestic areas mapped to inferred main functions; commercial/industrial mapping is conditional on the function inference, not an independent sector-area measurement',
+        'Observed_Residential_Area_Share':'Scoped domestic GFA / (domestic + nondomestic GFA)',
+        'Observed_Nondomestic_Area_Share':'Scoped nondomestic GFA / (domestic + nondomestic GFA); not automatically commercial',
+        'Evidence_Subclass_Weights':'Classification evidence weights; never measured floor-area fractions',
+        'Proportion_Method':'single_function_assumption, registered_main_area_only, unknown or nonassessed label',
+        'Functional_Subclasses':'JSON list of evidenced functional components, with no quantitative allocation',
+        'Physical_Review_Flags':'Semicolon-separated review triggers; flags do not by themselves prove an error',
+        'BDBIAR_Match_Quality':'Only inside_unique donates direct function evidence; nearest/shared/tied matches require review',
+        'BUILDINGCSUID':'Stable CSDI component identifier used for exact source matching; original local value retained',
+        'NUMABOVEGROUNDSTOREYS':'Original footprint-table storey count, including null/zero/conflicting reports; not overwritten',
+        'TOPHEIGHT':'Original footprint-table top elevation in mPD; never directly interpreted as relative height',
+        'BASEHEIGHT':'Original footprint-table base elevation in mPD; missing remains null, not zero',
+        'Source_Footprint_Area_sqm':'Original source area attribute before geometry-derived replacement',
+        'Geometry_Quality':'source_valid or repaired_make_valid; local footprint retained after valid polygon repair',
+        'Footprint_Area_QA':'Whether original stored area differs from recomputed projected polygon area',
+        'Duplicate_Footprint_Geometry':'Equal planar footprint geometry; distinct tower/podium components may legitimately coincide',
+        'Height_Terrain_QA':'Rejected point-terrain difference; applies to the separate ground-height estimate',
+        'Height_Source_Comparison_QA':'OSM and component-height discrepancy; their reference planes may differ',
+        'Floors_Quality':'Reported, missing, conflicting/scope unresolved, or not applicable to nonbuilding structure',
+        'Floor_Height_Proxy_Assumption_m':'3 m assumed storey height, only where optional height-derived proxy exists',
+        'OSM_Height_m':'Source-reported height parsed into metres from a comparable polygon; component reference unverified',
+        'OSM_Storeys':'OSM building:levels report from a comparable polygon, including conflicting withheld values',
+        'OSM_Storeys_Scope_QA':'Whole-building OSM levels only donate to component storeys when component base is within 3 m of point terrain; other source reports remain separate',
+        'OSM_Dimension_Match_QA':'Polygon coverage/identity/conflicting-attribute checks for OSM dimension donation',
+        'OSM_Dimension_Object_ID':'Source object and geometry identity used for the dimension match',
+        'Terrain_Elevation_mPD':'Coordinate-checked single-point DTM elevation, not a surveyed building base',
+        'Registered_GFA_Source':'Structure registration or uniquely scoped single-structure permit; missing otherwise',
+        'GFA_Proxy_Method':'Uniform floorplate approximation or unknown/not applicable; no inferred height/3 storeys used',
+        'GFA_Quality':'Registered scope checked, uniform-floorplate proxy, unknown or nonbuilding not applicable',
+        'Permit_IDs':'JSON list of linked occupation permits; link multiplicity is retained',
+        'Permit_GFA_Scope':'single_structure or shared_or_multiple_permits; shared totals are not allocated to every structure',
+        'Permit_GFA_Usable':'True only for one structure/one permit with complete nonnegative positive-total GFA components',
+        'GFA_DOMESTIC_SUM':'Domestic GFA of one uniquely scoped permit; shared/multiple/incomplete values are null',
+        'GFA_NONDOMESTIC_SUM':'Nondomestic GFA of one uniquely scoped permit; nondomestic does not imply commercial function',
+        'Proportion_Quality':'Observed main area, assumed single function, unknown, or nonassessed label; never model probability',
+        'Functional_Main_Classes':'JSON list of evidenced main functional components; no quantitative area allocation',
+        'Classification_QA':'Preserved function-source/registered-area/parent-subclass conflicts; empty means no configured flag',
+        'Function_Quality':'source_inferred, model_inferred or unknown; none denotes independent whole-stock validation',
+        'ML_Decision_Status':'Source retained, inferred main function, low confidence, insufficient class validation, unverified slender structure, or source-conflict unknown',
+        'ML_Subclass_Confidence':'Maximum subclass model probability only where subclass inference was considered; not area share',
+        'Subclass_Source':'Retained source evidence, v2 model inference, source-conflict withholding or missing; may differ from main-class source',
+        'Geometry_Review_Status':'Geometry-review/cache state; function inheritance does not dissolve or delete original footprints',
+        'LLM_Review_Status':'Whether a matching v2 text checkpoint exists; old unverifiable outputs are historical evidence only',
+        'CSDI_Basement_Storeys':'Original CSDI basement count, separate from above-ground storeys and not added to proxy GFA',
+        'CSDI_Structure_Type':'CSDI Tower, Podium, Open-sided Structure or Temporary Structure; not itself a functional class',
+        'CSDI_Status':'Original status in the frozen public distribution; snapshot acquisition is not survey date',
+        'Dataset_Version':'Version of the revised dataset and field semantics',
+        'Unknown_Value_Policy':'Null with quality/source fields; class unknown has its explicit bilingual taxonomy label',
+    }
+    meanings.update({EXPORT_MAPPING[key]:text for key,text in {
+        ID:'Original LandsD structure identifier; unique string and complete original inventory retained',
+        'SHAPE_Area':'Area of the valid projected structure footprint; overlapping tower/podium records are not disjoint land area',
+        'Estimated_Floors':'Conflict-checked reported above-ground storeys; null includes nonbuilding not applicable',
+        'Calibrated_Main_Class':'Source- or model-inferred dominant function; unknown/mixed/nonassessed are explicit classes',
+        'Calibrated_Sub_Class':'Canonical functional subclass consistent with parent; unknown if unsupported',
+        'Calibrated_Mix_Proportion':'Subclass:share vector; single-function 1 is an assumption, mixed shares need scoped area evidence',
+        'Calibrated_Source':'Main-function source or model-inference method; separate from dimension/subclass provenance',
+        'Calibrated_Notes':'Interpretation of main/subclass inference and proportion limitations',
+        'ML_Confidence':'Maximum main-model probability for every record, including source-retained classes; not source correctness confidence',
+        'BUILDINGSTRUCTURETYPE':'Original T non-podium structure or P podium; T also contains structural infrastructure',
+        'CATEGORY':'Original legal/administrative building category; not automatically building function',
+        'STATUS':'Original local footprint-table lifecycle status code',
+        'GROSSFLOORAREA':'Original structure-level registered GFA attribute before validity/scope selection',
+        'BUILDINGNAMEEN':'Original selected official English building name',
+        'BUILDINGNAMETC':'Original selected official Traditional Chinese building name',
+        'BDBIAR_OBJECTID':'Nearest selected BDBIAR point ID; only inside_unique donates direct use evidence',
+        'BDBIAR_CLASS':'BDBIAR classification only for a point uniquely inside the footprint; composite labels are not pure functions, other point attributes are withheld',
+        'BDBIAR_AGE':'Source completion/age-year only for a point uniquely inside the footprint; not elapsed age; outside/shared/nearest-only point years are withheld',
+        'distance_to_bdbiar':'Distance to the selected BDBIAR point; proximity alone does not prove attribute correspondence',
+        'Matched_POIs':'Serialized matched POI evidence; tenant counts do not determine use-area shares',
+        'osmid':'Matched OSM/Overture record identity inherited from spatial aggregation; not a local building ID',
+        'building':'Matched OSM building tag; generic yes does not establish function',
+        'amenity':'Matched OSM amenity evidence; may describe a tenant',
+        'shop':'Matched OSM shop evidence; may describe a tenant',
+        'OZP_ZONE_LABEL':'Matched planning-zone code; source literal NULL is normalized to null (original in frozen OZP inputs), while Nullah description is retained; planning intent does not prove current use',
+        'OZP_DESC_ENG':'English statutory planning-zone description',
+    }.items()})
+    for main in MAIN_CLASSES:
+        meanings[EXPORT_MAPPING['proba_'+main]] = 'Uncalibrated main-model probability for '+main+'; three probabilities sum to 1, never floor-area shares'
+    area_fields={'Source_Footprint_Area_sqm','Registered_GFA_sqm','GFA_Proxy_sqm','GFA_Best_Available_sqm',
+        'GFA_DOMESTIC_SUM','GFA_NONDOMESTIC_SUM',EXPORT_MAPPING['SHAPE_Area'],EXPORT_MAPPING['GROSSFLOORAREA']}
+    elevation_fields={'TOPHEIGHT','BASEHEIGHT','Terrain_Elevation_mPD','CSDI_Base_Elevation_mPD','CSDI_Top_Elevation_mPD'}
+    metre_fields={EXPORT_MAPPING['Estimated_Height'],EXPORT_MAPPING['distance_to_bdbiar'],'Ground_To_Top_Height_m',
+        'Component_Base_Above_Terrain_m','OSM_Height_m','Floor_Height_Proxy_Assumption_m'}
+    dictionary=[]
+    for col in public:
+        dictionary.append({'field':col,'nonmissing':int(public[col].notna().sum()),'dtype':str(public[col].dtype),
+            'unit_or_format':'m2' if col in area_fields else 'm above Hong Kong Principal Datum' if col in elevation_fields else 'm' if col in metre_fields else 'see meaning; categorical/count/serialized evidence',
+            'null_meaning':'No configured flag' if col.endswith('_QA') else 'Unknown, unavailable or not applicable; consult source/quality fields',
+            'meaning':meanings[col]})
+    pd.DataFrame(dictionary).to_csv(Path(OUTPUT_DIR)/'field_dictionary.csv',index=False,encoding='utf-8-sig')
+    text = f'''HKBFETD v2.0 — 修订启动于 2026-10-22；实际生成时间见 pipeline_run_manifest.json
+建筑/结构记录数：{len(public):,}；完整保留 v1/v1.1，结构 ID 集合不变。
+有效高度：{comparison['new_height_known']:,}；有效报告层数：{comparison['new_floor_known']:,}。
+主高度空值（缺失/冲突）：{validation['unknown_height_records']:,}；主层数空值（缺失/冲突/不适用）：{validation['unknown_floor_records']:,}。
+
+Height_m 主列采用结构本体高度：同一结构的顶部高程减底部高程，塔楼与裙楼分别计算。不是地面至顶部或建筑学尖顶高度。
+CSDI Building 原始高程经公开分发快照补充，按唯一 BuildingCSUID、结构类型及有效足迹交并比 >=0.95 匹配；原有足迹不替换。
+本版保持原 2025-02-06 建筑清单以便逐栋对照，不声称覆盖快照中所有新增或变更的建筑；未匹配及几何变化另作标记。
+公开分发者生成的 height_m 不使用；所有主高度直接由原始 BaseHeight/TopHeight 重算。快照版本、下载链接、SHA256 见 data/sources 元数据。
+原表 T 泛指非裙楼结构，CSDI 进一步区分 Tower、Open-sided Structure、Temporary Structure；原表 P 仅匹配 Podium。
+Ground_To_Top_Height_m 单列保存地面至顶部估计，优先 CSDI 顶高减点 DTM，否则原始 LandsD 顶高减 DTM 或 OSM 报告高度。
+点地形证据采于 2026-08-30；单点采样、时间变化、屋顶/建筑学高度及不同来源的参考面限制仍存在。它不作为结构本体高度的缺失替代。
+ICC 塔楼底部在裙楼上，因此结构本体高度与地面至顶部高度不同；中银大厦结构顶高也不能代表包含尖顶的建筑学总高。
+OSM_Height_m 原标签值保留，单位按 OSM 规则解析；与本体高度不同可能源自参考面不同，仅标记复核，不混算或平均。
+Floors_Count 仅使用通过源间冲突检查的报告层数；Floors_Height_Proxy 是单独的 3 m 层高假设，未当作报告层数或面积计算依据。
+主层数与当前结构对应；OSM 整栋建筑层数可能包含裙楼，仅在结构底部与地形点相差不超过 3 m 时作为可比较候选，其余仅保留在 OSM_Storeys，不与官方结构层数混算。这个范围判断同样受地形采样误差限制。
+原始 NUMABOVEGROUNDSTOREYS、TOPHEIGHT、BASEHEIGHT 保留原值。
+空值表示无法可靠补齐；原因见 Height_Quality、Floors_Quality、Height_Source、Floors_Source。
+
+Registered_GFA_sqm 仅使用单体登记面积或范围通过检查的一栋建筑/一份许可证面积。
+共享/多份许可证的面积不擅自分摊；Permit_Group 等组级证据保存在阶段数据。
+GFA_Proxy_sqm 使用几何面积×报告层数，假设每层同样大小；GFA_Best_Available_sqm 优先登记面积，否则代理面积。
+比较总量必须同时报告覆盖率；未知值增加不是香港实体建筑面积减少。
+
+UBEM_Mixed_Proportions 不再混入 POI 数量或模型概率；单功能的 1.0 是明确标记的 single_function_assumption。
+混合建筑无可靠子类面积时比例为空；Observed_Main_Area_Proportions 仅记录范围明确的住宅/非住宅面积证据。
+Functional_Subclasses 与 Evidence_Subclass_Weights 只表示功能及分类证据，不是实测面积份额。
+Observed_Main_Area_Proportions 的住宅/非住宅面积来自登记，但把非住宅映射为商业或工业仍以推断用途为条件；不能把这一步映射当作独立实测的商业/工业面积。直接登记份额见 Observed_Residential_Area_Share 与 Observed_Nondomestic_Area_Share。
+法定图则中源标签字面值 NULL 规范化为真正空值，其 Nullah 描述仍保留；原始字面值保存在冻结区划输入中，不生成名为 NULL 的用途类别。
+法律管辖类别“合法私人建筑”、政府产权、OSM building=yes 不再直接决定功能。
+小于 5 m² 且缺少其他资料，不再足以把足迹判为噪声。
+已核实的青马、汀九、深圳湾、昂船洲和汲水门桥塔，以及严格匹配的显式基础设施多边形，归为非评估结构；保留结构高度，楼宇层数及能源面积代理留空，原报告值保留。
+高度超过 100 m、占地小于 150 m² 而又无占用楼宇功能证据的未知结构，不允许仅靠模型补成楼宇用途；原始高程及结构高度仍保留，不凭细长形状判成确定的非建筑。
+源基础设施筛查不会把所有 tower 标签当作非建筑，宗教/观景塔及泵站不因此自动排除。结构用途来源与空间识别证据逐条记录。
+屋宇署“住宅/综合用途”组合标签不再被当成确定的纯住宅；政府建筑与房委会裙楼需具体功能证据。
+屋宇署点位只有唯一落在当前足迹内时，其分类及楼龄年份才进入公开建筑属性；最近点、共享点等匹配不转移这些属性，原点位资料保留在阶段数据，点位编号与距离继续保留作追溯。
+功能来源冲突不再自动变成混合用途；未能判定时保留未知并标记。
+
+分类模型使用几何、分区和来源明确的物理特征；缺失值只在训练分区拟合插补器，不回写公开物理字段。
+移除带标签的邻居主类特征，使用 2 km 空间分组验证。主类概率表示互斥的主导功能类别，不能识别任意混合比例。
+训练标签为来源推断的弱监督标签，model_validation.json 的分数是对这些标签的空间留出一致性，不是新完成的独立实测精度。
+旧验证表只有旧预测“正确/错误”标记，没有独立正确类别及实测高度，不能据此自动计算新版独立准确率。
+低于阈值的主类/子类保留未知；原有明确的混合及非评估主类受到保护。
+主类/子类还需在空间留出集中有至少 30 条超过置信阈值的预测，且对来源标签的精确率至少 0.80，才允许模型补齐该类别。
+主类置信门槛先在外层训练分区内另切空间组校准：在 0.70/0.80/0.90/0.95/0.99 中选择达到至少 30 条、来源标签精确率至少 0.90 的最低门槛；无法达标的主类禁用自动补齐。校准不使用外层留出标签，具体分区和每类门槛随结果保存。
+此门槛使用留出结果筛选可发布类别，不把同一结果冒充筛选后独立测试精度；不达标的预测不回退到另一类别，直接保留未知。
+用途来源存在尚未解决的冲突时，模型置信度再高也不补成确定主类/子类；模型概率仍保留供检查。
+
+多模态与 LLM 原有结果完整保留为历史证据。旧缓存缺少输入/提示词/图像指纹，未冒充 v2 新验证结果。
+默认重现不调用 API，不下载新影像；待核验任务见中间目录和 unresolved_building_review_queue.csv。
+Validation_Materials.zip 中的 200 张旧图可恢复；其余原图无法保证与未来下载的影像时间版本相同。
+新请求逐条保存输入、提示词/模型及图像哈希；成功结果与短暂文件路径分离，可按内容断点续跑。
+
+物理数值冲突筛查：同口径高度跨来源差异 > max(10 m, 20%)；报告层数差异 > max(1 层, 10%)。
+结构本体高度/报告层数小于 1 m 或大于 20 m 时，层数范围可能不对应当前结构，融合层数及其代理面积留空；原报告值保留。这是保守复核约定，不是自动纠错真值。
+地形估计只接受 2–600 m 正差；不可接受差值明确标记。以上为质量控制约定，不是实测误差界限。
+足迹 <150 m² 且高度 >150 m 等阈值用于人工复核，不自动判为错误或删除。
+结构本体高度 <2 m、底部高程与地形点相差 >3 m 也单列复核；薄结构、裙楼托起的塔楼和地形采样偏差均可能触发，不据此自动删除高度。
+高度/报告层数不在 2–8 m、登记面积与均匀楼板代理相差超过 3 倍，也只作为复核线索。
+OSM 尺寸匹配要求双方覆盖至少 60%、交并比至少 50%；共享对象和近似等优冲突另作标记。
+dimension_qa_summary.json 汇总这些复核条件及新版 15 m 数量；Physical_Review_Flags 保留逐栋原因。
+独立验证模板包括已标记和未标记建筑，尚待人工与外部资料核实；本轮没有伪造独立真值。
+
+坐标：EPSG:2326，平面单位米；GeoJSON 带此坐标系声明。推荐支持该 CRS 的 GeoParquet。
+数据源参考：https://data.gov.hk/en-data/dataset/hk-landsd-openmap-landsd-building
+高程基准：https://www.geodetic.gov.hk/common/data/pdf/explanatorynotes_c.pdf
+OSM 标签定义：https://wiki.openstreetmap.org/wiki/Key:height
+数据归属与许可继续遵循各提供方及 OpenStreetMap 的条款，源版本与校验见复现清单。
+'''
+    (Path(OUTPUT_DIR)/'RELEASE_NOTES_zh.txt').write_text(text,encoding='utf-8')
+
+
+def main():
+    frame = attach_geometry(read_table(ML_FINAL_OUTPUT_PATH),str(Path(ML_FINAL_OUTPUT_PATH).with_suffix('.geojson')))
+    validation = validate_release(frame)
+    public = generate_public_dataset(frame)
+    old,new,comparison = compare_releases(public)
+    create_review_tables(public)
+    make_figures(old,new)
+    write_documentation(public,validation,comparison)
+    (Path(OUTPUT_DIR)/'release_validation.json').write_text(json.dumps(validation,ensure_ascii=False,indent=2),encoding='utf-8')
+    files = [PUBLIC_DATASET_CSV_PATH,PUBLIC_DATASET_GEOJSON_PATH,str(Path(PUBLIC_DATASET_CSV_PATH).with_suffix('.parquet'))]
+    manifest = {Path(path).name:{'bytes':Path(path).stat().st_size,'sha256':file_hash(path)} for path in files}
+    (Path(OUTPUT_DIR)/'release_checksums.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
+    print(f'[INFO] Step 10: v2 release and complete old/new comparison generated for {len(public)} buildings')
+    return True
+
+
+if __name__ == '__main__':
+    main()

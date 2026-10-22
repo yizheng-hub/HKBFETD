@@ -57,6 +57,17 @@ def init_keyword_tool(keywords_file_path=None):
     
     KEYWORD_MAP = {}
     ABSOLUTE_NOISE_KEYWORDS = []
+    uninformative = {'estate','公司','company','集团','group','机构','organization','部门','department',
+        '行政','administration','公共','public','政府','government','社区','community','服务','service',
+        '设施','facility','基地','base','场地','site','园区','park','区域','area',
+        '房屋署','housing authority','房委会','房署','大厦','plaza','广场'}
+    commercial_form_only = {to_simplified_chinese(word).lower() for word in [
+        '商厦','商廈','商业大厦','商業大廈','Commercial Building','Commercial Centre','商業中心']}
+    residential_form_only = {to_simplified_chinese(word).lower() for word in [
+        '住宅楼宇','Residential Building','公寓','Apartment','低密度住宅','Low Density Residential',
+        '住宅大厦','Residential Tower','屋苑','大廈','住宅樓','别墅','別墅','Villa','Residence',
+        'Condominium','Flat','Mansion','独立屋','獨立屋','Detached House','小型屋宇','Small House',
+        '洋房','bungalows','平房','独立小屋','类似屋宇','低层住宅','Low-rise Residence','Cottage','Chalet']}
     
     for main, subs in KEYWORDS_CONFIG.items():
         if main == "__STRONG_KEYWORDS__":
@@ -65,7 +76,10 @@ def init_keyword_tool(keywords_file_path=None):
         for sub, kws in subs.items():
             for kw in kws:
                 if kw_sl := to_simplified_chinese(kw).lower().strip():
-                    KEYWORD_MAP[kw_sl] = (main, sub)
+                    if kw_sl in uninformative:
+                        continue
+                    generic_form = (main=='住宅类别' and kw_sl in residential_form_only) or (main=='商业类别' and kw_sl in commercial_form_only)
+                    KEYWORD_MAP[kw_sl] = (main, '未知类别' if generic_form else sub)
                     if sub == '绝对噪声':
                         ABSOLUTE_NOISE_KEYWORDS.append(kw_sl)
     
@@ -98,7 +112,8 @@ def classify_text_by_keywords(text, keyword_regex, keyword_map):
         return [], []
     matches = keyword_regex.findall(to_simplified_chinese(text).lower().strip())
     if matches:
-        return list(set(matches)), list(set(keyword_map[kw] for kw in matches))
+        ordered = list(dict.fromkeys(matches))
+        return ordered, list(dict.fromkeys(keyword_map[kw] for kw in ordered))
     return [], []
 
 def classify_from_bdbiar_final(text):
@@ -106,9 +121,11 @@ def classify_from_bdbiar_final(text):
     if pd.isna(text): return (None, None)
     text = str(text)
     
+    if any(k in text for k in ['綜合用途', 'Composite']):
+        return (None, None)
     if any(k in text for k in ['寫字樓', '商業', 'Office', 'Commercial']):
-        return ('商业类别', '办公室（Office）')
-    if any(k in text for k in ['住宅', '綜合用途', 'Residential', 'Composite']):
+        return ('商业类别', None)
+    if any(k in text for k in ['住宅', 'Residential']):
         return ('住宅类别', '私人房屋（Private Housing）')
     if any(k in text for k in ['幼稚園', '學校', '教育', 'School', 'Kindergarten', 'Secondary']):
         return ('商业类别', '教育（Education）')
@@ -186,7 +203,7 @@ def classify_osm_feature(row, keyword_tool=None, use_case='default'):
         keyword_tool = init_keyword_tool()
     
     text_parts = []
-    for col in ['shop', 'amenity', 'building', 'name']:
+    for col in ['building:use', 'building', 'office', 'shop', 'amenity', 'name']:
         if col in row and pd.notna(row[col]):
             text_parts.append(str(row[col]))
     text = ' '.join(text_parts)

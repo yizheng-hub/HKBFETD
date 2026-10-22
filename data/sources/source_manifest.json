@@ -1,0 +1,132 @@
+{
+  "purpose": "Frozen generic building-classification inputs; no dependency on any active resilience repository",
+  "landsd_footprint_source_date": "2025-02-06",
+  "landsd_reference": "https://data.gov.hk/en-data/dataset/hk-landsd-openmap-landsd-building",
+  "sources": [
+    {
+      "path": "data/sources/osm_features_snapshot.geojson",
+      "bytes": 406107701,
+      "sha256": "12152b7ab72a42329f3b0c17117230ece937cd86e3974bd3b40a1d15467a3256",
+      "kind": "frozen_pre_aggregation_snapshot",
+      "details": {
+        "origin": "Preserved original intermediate_files/step1_osm_features_all.geojson",
+        "provider": "OpenStreetMap and Overture combined by the original extractor",
+        "snapshot_date": "not independently recorded; no claim of current completeness",
+        "license_reference": "https://www.openstreetmap.org/copyright"
+      }
+    },
+    {
+      "path": "data/sources/landsd_dtm_building_points.csv",
+      "bytes": 8646137,
+      "sha256": "06d05c8ddb3989cd9444ea99779eb9d4be36cb7b800de20130467fc0f21dadb2",
+      "kind": "point_ground_evidence",
+      "details": {
+        "dataset": "LandsD Open3Dhk DTM point samples",
+        "endpoint": "https://3d.map.gov.hk/mapviewer/api/getZ/dtm",
+        "retrieved_utc": "2026-08-30T15:58:27.748488+00:00",
+        "coordinate_reference_system": "EPSG:4326 request points",
+        "elevation_interpretation": "metres relative to Hong Kong Principal Datum",
+        "sampling_geometry": "LandsD building representative point",
+        "records": 181627,
+        "nonmissing_elevations": 181627,
+        "warning": "Point DTM samples are spatial evidence, not surveyed building base heights."
+      }
+    },
+    {
+      "path": "data/sources/csdi_framework_mirror_20261023.parquet",
+      "bytes": 41336255,
+      "sha256": "f3246dcf5e94aab3c643991d597616894d3ca56035eb86968df379b6f61dd9c5",
+      "kind": "frozen_CSDI_building_public_distribution",
+      "details": {
+        "primary_provider": "Hong Kong Lands Department / CSDI Building",
+        "primary_service": "https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637211194312_35158/MapServer/0",
+        "distributor": "AlreadyOpen/hk-buildings",
+        "distribution_repository": "https://github.com/AlreadyOpen/hk-buildings",
+        "frozen_download": "https://huggingface.co/datasets/alreadyopen/hk-buildings/resolve/77418616b40980f05f1c4bc884aca79068b3b72e/buildings.parquet",
+        "revision": "77418616b40980f05f1c4bc884aca79068b3b72e",
+        "retrieved_utc": "2026-10-22T16:40:07.321320+00:00",
+        "sha256": "f3246dcf5e94aab3c643991d597616894d3ca56035eb86968df379b6f61dd9c5",
+        "bytes": 41336255,
+        "height_definition": "Original BaseHeight and TopHeight elevations retained; publisher height_m ignored and recomputed during validation",
+        "verification": "Whole frozen file SHA256 matches distributor LFS object. Full ID/geometry/elevation comparisons performed; four example elevations checked independently against the official API. These are not independent height measurements.",
+        "records": 342195,
+        "building_csuid_unique": true,
+        "source_observation_dates": "not retained by distributor; retrieval date is not a survey date",
+        "primary_height_policy": "structural component TopHeight minus BaseHeight; ground-to-top retained separately",
+        "integration_match_policy": "Exact unique BuildingCSUID, compatible non-podium/podium type, valid source geometry and footprint IoU >=0.95; retain local footprints",
+        "official_api_case_checks": [
+          {
+            "local_building_id": "170369",
+            "base_mPD": 3.9,
+            "top_mPD": 380.7,
+            "storeys": null
+          },
+          {
+            "local_building_id": "181189",
+            "base_mPD": 7.0,
+            "top_mPD": 310.3,
+            "storeys": 65
+          },
+          {
+            "local_building_id": "192326",
+            "base_mPD": 29.4,
+            "top_mPD": 490.0,
+            "storeys": 103
+          },
+          {
+            "local_building_id": "87318",
+            "base_mPD": 951.2,
+            "top_mPD": 957.4,
+            "storeys": null
+          }
+        ]
+      }
+    },
+    {
+      "path": "data/sources/osm_structural_objects_20260420.parquet",
+      "bytes": 72145,
+      "sha256": "d0e061fd646ba3dfb84c4c1f0b26a44c827d90d9a07d9de7f41f187017b32628",
+      "kind": "frozen_explicit_OSM_structural_objects",
+      "details": {
+        "provider": "OpenStreetMap",
+        "input_pbf": "data/hong-kong-latest.osm.pbf",
+        "input_sha256": "9eec6c9e77dd5c2bec3b7a076aff27a10cf9826b74ceec0f3d87b8762414a62d",
+        "input_local_modified_date": "2026-04-20; extraction observation dates not independently guaranteed",
+        "extracted_utc": "2026-10-22T17:11:03.976971+00:00",
+        "criteria": {
+          "man_made": [
+            "tower",
+            "mast",
+            "chimney",
+            "storage_tank",
+            "water_tower",
+            "crane"
+          ],
+          "bridge:support": [
+            true
+          ],
+          "building": [
+            "bridge_support",
+            "bridge",
+            "chimney",
+            "storage_tank",
+            "water_tower"
+          ]
+        },
+        "polygons_only": true,
+        "features": 439,
+        "sha256": "d0e061fd646ba3dfb84c4c1f0b26a44c827d90d9a07d9de7f41f187017b32628",
+        "warning": "Explicit infrastructure tags and comparable unique polygon footprints are required; no point equipment tags are donated to their host buildings."
+      }
+    }
+  ],
+  "limitations": [
+    "Point terrain evidence is not a surveyed building base",
+    "Raw converted LandsD BASEHEIGHT values are all null",
+    "Source height and footprint/base conventions can differ; conflicts remain unknown",
+    "Other source input hashes are recorded by the reproduction runner",
+    "CSDI supplement is a frozen public distribution of official source fields, not a direct full API download; distributor height_m is unused",
+    "Primary v2 height is component top minus base; point-terrain and OSM heights remain separate",
+    "Source survey dates are not retained in the public distribution; stable component ID/type/geometry gates limit but do not eliminate time mismatch"
+  ]
+}

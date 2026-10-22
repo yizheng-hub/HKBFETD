@@ -1,0 +1,31 @@
+{
+  "provider": "OpenStreetMap",
+  "input_pbf": "data/hong-kong-latest.osm.pbf",
+  "input_sha256": "9eec6c9e77dd5c2bec3b7a076aff27a10cf9826b74ceec0f3d87b8762414a62d",
+  "input_local_modified_date": "2026-04-20; extraction observation dates not independently guaranteed",
+  "extracted_utc": "2026-10-22T17:11:03.976971+00:00",
+  "criteria": {
+    "man_made": [
+      "tower",
+      "mast",
+      "chimney",
+      "storage_tank",
+      "water_tower",
+      "crane"
+    ],
+    "bridge:support": [
+      true
+    ],
+    "building": [
+      "bridge_support",
+      "bridge",
+      "chimney",
+      "storage_tank",
+      "water_tower"
+    ]
+  },
+  "polygons_only": true,
+  "features": 439,
+  "sha256": "d0e061fd646ba3dfb84c4c1f0b26a44c827d90d9a07d9de7f41f187017b32628",
+  "warning": "Explicit infrastructure tags and comparable unique polygon footprints are required; no point equipment tags are donated to their host buildings."
+}

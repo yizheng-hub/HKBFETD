@@ -1,4 +1,4 @@
-﻿# osm_aggregation.py
+# osm_aggregation.py
 
 # -*- coding: utf-8 -*-
 import os
@@ -34,7 +34,7 @@ try:
 except ImportError:
     fuzz = None
 
-from utils import (to_simplified_chinese)
+from utils import (to_simplified_chinese, safe_str)
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -433,19 +433,14 @@ def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
     duplicates_osm_idx = set()
     if fuzz is not None:
         for idx, row in joined.iterrows():
-            name_osm = str(row.get('name_left', '')).lower()
-            name_ovt = str(row.get('name_right', '')).lower()
+            name_osm = safe_str(row.get('name_left', '')).strip().lower()
+            name_ovt = safe_str(row.get('name_right', '')).strip().lower()
             
             if name_osm and name_ovt:
                 if fuzz.token_set_ratio(name_osm, name_ovt) > 80:
                     duplicates_osm_idx.add(idx)
-            elif not name_osm and not name_ovt:
-                if row.get('amenity_left') == row.get('amenity_right') or row.get('shop_left') == row.get('shop_right'):
-                    duplicates_osm_idx.add(idx)
-    else:
-        for idx, row in joined.iterrows():
-            if row.get('amenity_left') == row.get('amenity_right') or row.get('shop_left') == row.get('shop_right'):
-                duplicates_osm_idx.add(idx)
+            # Missing names do not establish cross-source identity, even for
+            # nearby points; retain both observations when identity is unknown.
     
     valid_drop_indices = [i for i in duplicates_osm_idx if i in gdf_osm_pois.index]
     gdf_osm_unique = gdf_osm_pois.drop(index=valid_drop_indices)
@@ -455,7 +450,8 @@ def fuse_poi_datasets(gdf_osm_pois, gdf_overture):
     if 'data_source' not in gdf_overture.columns:
         gdf_overture['data_source'] = 'overture'
         
-    cols_to_keep = ['osmid', 'name', 'amenity', 'shop', 'data_source', 'geometry']
+    cols_to_keep = ['osmid', 'osm_type', 'name', 'amenity', 'shop', 'office', 'height',
+                    'building:height', 'building:levels', 'building:use', 'data_source', 'geometry']
     common_cols_osm = [c for c in cols_to_keep if c in gdf_osm_unique.columns]
     common_cols_ovt = [c for c in cols_to_keep if c in gdf_overture.columns]
     
@@ -579,12 +575,13 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
             return [], []
         matches = KEYWORD_REGEX.findall(to_simplified_chinese(text).lower().strip())
         if matches:
-            return list(set(matches)), list(set(KEYWORD_MAP[kw] for kw in matches))
+            ordered = list(dict.fromkeys(matches))
+            return ordered, list(dict.fromkeys(KEYWORD_MAP[kw] for kw in ordered))
         return [], []
     
     def classify_osm_feature_for_join(row):
         text_parts = []
-        for col in ['shop', 'amenity', 'building', 'name']:
+        for col in ['building:use', 'building', 'office', 'shop', 'amenity', 'name']:
             if col in row and pd.notna(row[col]):
                 text_parts.append(str(row[col]))
         text = ' '.join(text_parts)
@@ -612,20 +609,23 @@ def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
         gdf_osm_all['osmid'] = range(len(gdf_osm_all))
     
     gdf_osm_all = simple_geometry_validation(gdf_osm_all, "osm_preprocessed")
+    from data_quality import deduplicate_osm, parse_height, parse_storeys
+    gdf_osm_all = deduplicate_osm(gdf_osm_all)
     
     if gdf_osm_all.crs is None:
         gdf_osm_all = gdf_osm_all.set_crs(HK80_CRS)
     elif str(gdf_osm_all.crs) != HK80_CRS:
         gdf_osm_all = gdf_osm_all.to_crs(HK80_CRS)
     
-    osm_base_tags = ['osmid', 'name', 'building', 'amenity', 'shop', 'geometry']
+    osm_base_tags = ['osmid', 'osm_type', 'Source_Object_ID', 'Source_Feature_ID', 'OSM_Attribute_Conflicts',
+                     'name', 'building', 'building:use', 'amenity', 'shop', 'office', 'geometry']
     available_columns = [c for c in osm_base_tags if c in gdf_osm_all.columns]
     gdf_osm_clean = gdf_osm_all[available_columns].copy()
     
-    if 'building:height' in gdf_osm_all.columns:
-        gdf_osm_clean['osm_height'] = pd.to_numeric(gdf_osm_all['building:height'], errors='coerce')
-    else:
-        gdf_osm_clean['osm_height'] = np.nan
+    height_values = gdf_osm_all.get('height', pd.Series(np.nan, index=gdf_osm_all.index))
+    alternate = gdf_osm_all.get('building:height', pd.Series(np.nan, index=gdf_osm_all.index))
+    gdf_osm_clean['osm_height'] = height_values.map(parse_height).combine_first(alternate.map(parse_height))
+    gdf_osm_clean['osm_storeys'] = gdf_osm_all.get('building:levels', pd.Series(np.nan, index=gdf_osm_all.index)).map(parse_storeys)
     
     gdf_osm_clean['osm_area'] = gdf_osm_clean.geometry.area
     
@@ -826,15 +826,21 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
     if 'osmid' in gdf_aggregated.columns:
         matched_count = gdf_aggregated['osmid'].notna().sum()
     
-    try:
-        gdf_aggregated.to_file(AGGREGATED_GDF_PATH, driver='GeoJSON')
-    except Exception as e:
-        try:
-            csv_path = AGGREGATED_GDF_PATH.replace('.geojson', '.csv')
-            df_without_geom = gdf_aggregated.drop(columns=['geometry'])
-            df_without_geom.to_csv(csv_path, index=False, encoding='utf-8')
-        except Exception as e2:
-            pass
+    from data_quality import fuse_dimensions
+    from config import TERRAIN_SAMPLES_PATH, CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH
+    from ai_cache import file_hash
+    terrain = pd.read_csv(TERRAIN_SAMPLES_PATH) if os.path.exists(TERRAIN_SAMPLES_PATH) else None
+    with open(CSDI_METADATA_PATH, encoding='utf-8') as stream:
+        csdi_metadata = json.load(stream)
+    if file_hash(CSDI_BUILDINGS_PATH) != csdi_metadata['sha256']:
+        raise ValueError('Frozen CSDI source checksum mismatch')
+    csdi = gpd.read_parquet(CSDI_BUILDINGS_PATH)
+    attributes = fuse_dimensions(gdf_official_library, gdf_aggregated, terrain, csdi)
+    additional = [c for c in attributes if c not in gdf_official_library.columns]
+    gdf_aggregated = gdf_aggregated.merge(
+        attributes[['BUILDINGSTRUCTUREID'] + additional], on='BUILDINGSTRUCTUREID',
+        how='left', validate='many_to_one')
+    gdf_aggregated.to_file(AGGREGATED_GDF_PATH, driver='GeoJSON', AUTODETECT_JSON_STRINGS='NO')
     
     return gdf_aggregated
 
@@ -883,7 +889,8 @@ class Logger(object):
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(os.path.dirname(base_dir), "log")
+    from config import LOG_DIR
+    log_dir = LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, "2.osm_aggregation.txt")
     

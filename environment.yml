@@ -19,6 +19,11 @@ dependencies:
   - tqdm
   - pyogrio
   - fiona
+  - scipy
+  - contextily
+  - pillow
+  - psutil
+  - tabulate
   - jupyterlab
   - pip:
       - openai>=1.30.0

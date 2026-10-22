@@ -28,26 +28,160 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## API Configuration
+## v2 reproduction
 
-The project uses values in `src/config.py` by default.  
-You can directly edit these placeholder fields in `config.py`:
+The v2 repair preserves the original `output/` and `intermediate_files/` releases.
+New files go into `output/v2/`, `intermediate_files/v2/` and `log/v2/`.
+This repository contains the SD building classification project only.
 
-- `BASE_URL`
-- `API_KEY`
-- `CLOUD_MODEL_NAME`
-- `VISION_API_KEY`
-- `VISION_CLOUD_MODEL_NAME`
-
-Environment variables are optional (they override config values if provided):
+Activate `HKbuilding`, restore the frozen inputs listed below, then run:
 
 ```powershell
-$env:HKBFETD_BASE_URL = "https://api.yourcloudprovider.com/v1"
-$env:HKBFETD_API_KEY = "your_llm_api_key"
-$env:HKBFETD_CLOUD_MODEL_NAME = "hunyuan-standard-256k"
-$env:HKBFETD_VISION_API_KEY = "your_vision_api_key"
-$env:HKBFETD_VISION_CLOUD_MODEL_NAME = "hunyuan-turbos-vision"
+python src/run_pipeline.py --input-bundle
+python -m unittest discover -s tests -v
 ```
+
+To continue an interrupted run, use `python src/run_pipeline.py --resume --input-bundle`.
+Completed stages are reused only when source, inputs, upstream results and output
+hashes match, including all three release figures. Resume rejects a changed or
+unknown recorded runtime/dependency environment before overwriting its provenance;
+restore that environment or run a full rebuild. Logs are in `log/v2/runner_step_N.txt`.
+`--run-root D:\HKBFETD-replay` puts generated results in a separate directory;
+source inputs continue to be read from this checkout. `--through 3` stops after
+the requested stage. The default run makes no external AI or imagery requests.
+
+Required inputs are not in Git. Use `output/v2/reproduction_inputs.zip`, when
+provided, and extract its relative paths into the checkout. It contains:
+
+- the 14 converted LandsD tables in `data/LandsD/`, source date 2025-02-06;
+- BDBIAR, OZP zones and Overture places at the paths in `src/config.py`;
+- the frozen pre-aggregation OSM/Overture snapshot in
+  `data/sources/osm_features_snapshot.geojson`;
+- coordinate-checked DTM samples and metadata in `data/sources/`;
+- the frozen CSDI Building GeoParquet and metadata in `data/sources/`, pinned to
+  the public distributor revision recorded in its metadata (source SHA256 checked);
+- explicit OSM structural-object polygons extracted from the frozen local PBF,
+  plus extraction criteria and source hashes in `data/sources/`;
+- the old v1.1 CSV used for comparison and available historical AI evidence.
+
+`data/sources/source_manifest.json` records provenance of the frozen supporting
+sources. `output/v2/pipeline_run_manifest.json` records every input hash, stage
+source hash and required output hash. The source ZIP, exact package versions,
+dependency lock and optional Conda explicit specification accompany each run.
+Live OSM extracts, terrain samples and external model calls cannot be assumed
+to reproduce a historical snapshot. Preserve the input bundle.
+Small source-provenance JSON files are tracked in Git; source binaries remain
+in the input bundle. Generic residential tags do not determine public/private
+housing tenure; explicit source evidence is preserved separately from model inference.
+BDBIAR matching considers all points before name-based roles. Only one point
+inside exactly one footprint donates function/year evidence; proximity, ties
+and overlapping ownership remain linkage records without usable attributes.
+OZP source labels literally equal to `NULL` are normalized to missing codes,
+with their `Nullah` descriptions retained; frozen raw zone files retain the
+original placeholders. Planning zones describe intent, not observed building use.
+
+## Physical attributes and uncertainty
+
+`Height_m` is **structural component height**, calculated as top minus base
+elevation. Towers and podiums remain separate structures. It is not architectural
+spire height. CSDI Building source elevations are supplemented from a frozen
+public GeoParquet distribution, matched by unique `BuildingCSUID`, compatible
+structure type and valid footprint IoU >=0.95. Local geometry is retained and
+the distributor's derived `height_m` is ignored. The original footprint table's
+`T` includes open-sided/temporary structures; CSDI's finer type is retained.
+
+`Ground_To_Top_Height_m` separately records datum top minus point DTM, or OSM
+reported height with an unverified reference. These are not substitutes for a
+missing component base. An ICC tower starting on a podium therefore has a
+different component and ground-to-top height. Source/quality/reference fields
+distinguish these meanings. Conflicts in comparable sources are withheld;
+different-reference discrepancies are flagged. Missing heights are not filled
+with 15 m. Original dimensions remain unchanged in raw fields.
+
+The source provider is [LandsD CSDI Building](https://portal.csdi.gov.hk/csdi-webpage/metadata/landsd_rcd_1637211194312_35158/html).
+The frozen distribution comes from [hk-buildings](https://github.com/AlreadyOpen/hk-buildings)
+via the pinned Hugging Face URL in `csdi_framework_mirror_20261023.metadata.json`.
+Its per-building survey dates were not retained by the distributor; acquisition
+date is not treated as a measurement date. Four reader-case elevations were
+checked against the official API; this is not independent whole-stock validation.
+The 2025-02-06 building inventory is retained for an exact v1.1 comparison;
+new/different-source IDs do not silently expand the stock to the current date.
+
+Reported storeys and the optional `height / 3 m` proxy are separate fields.
+The proxy rounds to the nearest integer, with half ties upward after normalizing
+the ratio to nine decimal places. It does not enter reported storeys or GFA. GFA is a scoped registered
+value or an explicitly marked footprint-times-reported-storeys approximation.
+Shared permits are not allocated in full to each constituent building.
+Source storey differences over max(1 storey, 10%) remain unresolved. A component
+height/storey ratio outside 1–20 m also withholds the fused storeys and related
+proxy GFA because their scopes may differ; reported raw counts remain available.
+These are conservative review rules, not measured error bounds.
+OSM whole-building storeys may include a podium. They donate to component
+storeys only when the component base is within 3 m of sampled terrain; other
+OSM reports remain separate and do not invalidate official component counts.
+
+Building-footprint inventories also contain non-building structures. Fourteen
+components were geographically identified as bridge pylons, including eight
+meeting the small-footprint/tall review threshold,
+using Highways Department factsheets, with stable IDs/coordinates/evidence in
+`ctl/verified_structure_evidence.csv`. Explicit OSM infrastructure polygons must
+match a unique footprint with IoU >=0.8. Generic tower tags do not exclude pagodas,
+observation towers or pumping-station buildings. Identified infrastructure is
+marked `Energy_Assessment_Scope=excluded_nonbuilding_structure`; its structural
+height and original attributes remain, while building storeys/GFA proxies are
+not applicable. Bridge pylons do not constitute unexplained building-height errors.
+Unclassified structures over 100 m tall with footprints below 150 m2 do not
+receive a model-only building function without occupied-building evidence.
+
+Footprint area describes each structural record, not disjoint land coverage.
+Tower/podium footprints may overlap or coincide. Use a geometry union for ground
+coverage; do not interpret their summed footprints as net land area.
+
+Function evidence, classifier probabilities and use-area fractions are separate.
+POI counts and model probabilities do not become area shares. Single-function
+vectors are labeled assumptions; unknown mixed-use shares remain empty. Main
+function and subclass models are retrained with a spatial holdout, without
+neighbor class labels, using imputation fitted within the training partition.
+Scores measure agreement with weakly supervised source labels; independent
+field-survey accuracy is not established by this release.
+The release's independent code/data review checks consistency and implementation;
+it does not replace independent field observations of building function.
+Source conflicts remain unknown even when a model probability exceeds its
+threshold. A tiny footprint without other evidence is not automatically noise.
+Model-filled main/subclasses additionally require at least 30 confidence-qualified
+spatial-holdout predictions and precision >=0.80 against source labels. Classes
+failing this deployment gate remain unknown. The holdout is used for this gate;
+its scores are not independent accuracy after selecting deployable classes.
+Main-class score cutoffs are selected first using a separate spatial calibration
+partition inside the outer training data: at least 30 predictions and precision
+>=0.90 against source labels. Outer holdout labels do not select these cutoffs.
+This calibrates decision cutoffs, not the model's probability values.
+
+## Optional AI review and image recovery
+
+Text and vision review are targeted at functional or footprint ambiguities.
+Neither is allowed to invent height, storeys, GFA or use percentages. API keys
+must come from `HKBFETD_API_KEY` / `HKBFETD_VISION_API_KEY` environment variables;
+never place credentials in source files. Provider URL and model settings also
+accept `HKBFETD_*` environment variables, as listed in `src/config.py`.
+
+Steps 4 and 6 default to offline queues and input-matched cache reuse. Explicit
+commands for requesting new evidence are:
+
+```powershell
+python src/4.llm_verification.py --refresh --limit 100
+python src/5.evaluation_and_merge.py
+python src/6.geometry_ai_arbitration.py --images --refresh --limit 100
+```
+
+After reviewed changes, regenerate Steps 7–10. New decisions are saved atomically
+with prompt/model/input and image hashes. A successful fingerprinted checkpoint
+can survive loss of its temporary image path. Every surviving image is still checked by content,
+including when the other image has been lost. Old caches without these hashes
+remain historical evidence and are not silently treated as fresh v2 verification.
+Step 6 recovers the 200 available images from `Validation_Materials.zip` and
+exports a resume inventory; other deleted images require reacquisition and may
+represent different imagery dates.
 
 ## Pipeline Order
 
@@ -56,9 +190,9 @@ Run scripts in order under `src/`:
 1. `1.data_preprocessing.py`
 2. `2.osm_aggregation.py`
 3. `3.rule_engine.py`
-4. `4.llm_verification.py` (API-dependent)
+4. `4.llm_verification.py` (offline queue/cache; API opt-in)
 5. `5.evaluation_and_merge.py`
-6. `6.geometry_ai_arbitration.py` (API-dependent)
+6. `6.geometry_ai_arbitration.py` (offline queue/cache; imagery/API opt-in)
 7. `7.apply_calibrations.py`
 8. `8.feature_engineering.py`
 9. `9.ml_classification.py`
@@ -66,16 +200,40 @@ Run scripts in order under `src/`:
 
 ## Reproducibility Notes
 
-- Steps 4 and 6 call external model APIs and may be non-deterministic.
-- If exact published outputs are required, keep/reuse provided `intermediate_files/` and `output/` artifacts.
-- Logs are written to project-level `log/` (same level as `src/`).
+- v1/v1.1 files remain in their original locations and are not overwritten.
+- The pre-CSDI terrain baseline is retained as full GeoParquet, model and exact
+  source/input bundles in `output/v2_terrain_baseline_20261023/`.
+- Missing values are exported as null with source and quality fields.
+- Geometry uses EPSG:2326 (metres); GeoParquet is recommended for GIS exchange.
+- Review source dates, terrain estimates, assumptions and coverage in the release notes.
+- The original plotting notebook remains a legacy analysis. New v2 comparison
+  and validation figures are generated by Step 10 in `output/v2/figures/`.
 
 ## Main Deliverables
 
-- `output/step9_ml_calibrated_classification.csv`
-- `output/step9_ml_calibrated_classification.geojson`
-- `output/HK_UBEM_Buildings_Public_v1.csv`
-- `output/HK_UBEM_Buildings_Public_v1.geojson`
+- `output/v2/HKBFETD_v2.csv`, `.geojson`, `.parquet`
+- `output/v2/v1_1_to_v2_building_changes.csv` and `comparison_summary.json`
+- `output/v2/model_validation.json` and spatial split/prediction tables
+- `output/v2/release_validation.json` and `release_checksums.json`
+- `output/v2/unresolved_building_review_queue.csv`
+- `output/v2/stratified_manual_validation_template.csv`
+- `output/v2/RELEASE_NOTES_zh.txt` and `figures/`
+- `output/v2/v2_source_snapshot.zip` and `reproduction_inputs.zip`
+
+After the complete run, `python src/analyze_height_sensitivity.py` compares the
+same trained model with current versus v1.1 heights, and
+`python src/verify_reproduction_bundle.py` checks every archived input and source.
+`python src/verify_release_formats.py` reads back all fields and geometries in
+the three released formats and checks their agreement.
+`python src/verify_release_preservation.py` additionally checks the local archived
+terrain baseline and original-file preservation inventory; it requires that
+reference archive. `python src/prepare_zenodo_package.py` collects the completed
+local comparison/verification products in `output/zenodo_upload_v2/` without
+uploading or publishing anything. Raw multi-provider inputs stay in their
+separate local archive. The publication folder includes exact checksums.
+`audit_dataset.py` reproduces the initial v1/v1.1 diagnostic audit from the
+preserved root-level releases. Its historical flags are not a v2 acceptance
+result; use the release verification commands above for v2.
 
 ## License
 

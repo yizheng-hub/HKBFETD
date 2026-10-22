@@ -1,4 +1,4 @@
-﻿# data_preprocessing.py
+# data_preprocessing.py
 
 
 # -*- coding: utf-8 -*-
@@ -456,15 +456,9 @@ def build_official_library(dfs_landsd, gdf_bdbiar, use_address_similarity=False)
         )
     
     if 'OP_BUILDING_STRUCTURE' in dfs_landsd and 'OCCUPATION_PERMIT' in dfs_landsd and not dfs_landsd['OP_BUILDING_STRUCTURE'].empty:
-        df_op_permit = dfs_landsd['OCCUPATION_PERMIT'].copy()
-        df_op_permit['DOMESTICGFA'] = pd.to_numeric(df_op_permit['DOMESTICGFA'], errors='coerce')
-        df_op_permit['NONDOMESTICGFA'] = pd.to_numeric(df_op_permit['NONDOMESTICGFA'], errors='coerce')
-        df_op_full = dfs_landsd['OP_BUILDING_STRUCTURE'].merge(df_op_permit, on='OPNO', how='left')
-        df_gfa_agg = df_op_full.groupby('BUILDINGSTRUCTUREID').agg(
-            GFA_DOMESTIC_SUM=('DOMESTICGFA', 'sum'), 
-            GFA_NONDOMESTIC_SUM=('NONDOMESTICGFA', 'sum')
-        ).reset_index()
-        gdf_base = gdf_base.merge(df_gfa_agg, on='BUILDINGSTRUCTUREID', how='left')
+        from data_quality import permit_attributes
+        df_gfa_agg = permit_attributes(dfs_landsd['OCCUPATION_PERMIT'], dfs_landsd['OP_BUILDING_STRUCTURE'])
+        gdf_base = gdf_base.merge(df_gfa_agg, on='BUILDINGSTRUCTUREID', how='left', validate='one_to_one')
     
     if 'BUILDING_INFO' in dfs_landsd and not dfs_landsd['BUILDING_INFO'].empty:
         df_info_agg = dfs_landsd['BUILDING_INFO'].groupby('BUILDINGSTRUCTUREID')['INFODESCRIPTION'].apply(
@@ -482,59 +476,9 @@ def build_official_library(dfs_landsd, gdf_bdbiar, use_address_similarity=False)
         gdf_bdbiar_reprojected = gdf_bdbiar.to_crs(gdf_base.crs)
         gdf_bdbiar_reprojected.rename(columns={'OBJECTID': 'BDBIAR_OBJECTID'}, inplace=True)
         
-        gdf_landsd_towers = gdf_base[gdf_base['BUILDINGSTRUCTURETYPE'] == 'T'].copy()
-        gdf_landsd_podiums = gdf_base[gdf_base['BUILDINGSTRUCTURETYPE'] == 'P'].copy()
-        gdf_bd_towers = gdf_bdbiar_reprojected[gdf_bdbiar_reprojected['NSEARCH4_C'].str.contains('座', na=False)].copy()
-        gdf_bd_podiums = gdf_bdbiar_reprojected[gdf_bdbiar_reprojected['NSEARCH4_C'].str.contains('平台', na=False)].copy()
-        
-        joined_towers = gpd.sjoin_nearest(
-            gdf_landsd_towers, gdf_bd_towers, how='left', 
-            max_distance=MAX_MATCH_DISTANCE, distance_col='d_t'
-        )
-        joined_podiums = gpd.sjoin_nearest(
-            gdf_landsd_podiums, gdf_bd_podiums, how='left', 
-            max_distance=MAX_MATCH_DISTANCE, distance_col='d_p'
-        )
-        
-        unique_towers = joined_towers.sort_values(['BUILDINGSTRUCTUREID', 'd_t']).groupby('BUILDINGSTRUCTUREID').first().reset_index()
-        unique_podiums = joined_podiums.sort_values(['BUILDINGSTRUCTUREID', 'd_p']).groupby('BUILDINGSTRUCTUREID').first().reset_index()
-        matched_in_step1 = pd.concat([
-            unique_towers.dropna(subset=['BDBIAR_OBJECTID']), 
-            unique_podiums.dropna(subset=['BDBIAR_OBJECTID'])
-        ])
-        matched_landsd_ids_step1 = matched_in_step1['BUILDINGSTRUCTUREID'].unique()
-        matched_bd_ids_step1 = matched_in_step1['BDBIAR_OBJECTID'].unique()
-        
-        unmatched_landsd = gdf_base[~gdf_base['BUILDINGSTRUCTUREID'].isin(matched_landsd_ids_step1)]
-        unmatched_bd = gdf_bdbiar_reprojected[~gdf_bdbiar_reprojected['BDBIAR_OBJECTID'].isin(matched_bd_ids_step1)]
-        
-        if not unmatched_landsd.empty and not unmatched_bd.empty:
-            joined_others = gpd.sjoin_nearest(
-                unmatched_landsd, unmatched_bd, how='left', 
-                max_distance=MAX_MATCH_DISTANCE, distance_col='d_o'
-            )
-            unique_others = joined_others.sort_values(['BUILDINGSTRUCTUREID', 'd_o']).groupby('BUILDINGSTRUCTUREID').first().reset_index()
-        else:
-            unique_others = unmatched_landsd.copy()
-            unique_others['d_o'] = np.nan
-        
-        
-        if 'd_t' in matched_in_step1.columns:
-            matched_in_step1.rename(columns={'d_t': 'distance_to_bdbiar'}, inplace=True)
-        elif 'd_p' in matched_in_step1.columns:
-            matched_in_step1.rename(columns={'d_p': 'distance_to_bdbiar'}, inplace=True)
-        
-        if 'd_o' in unique_others.columns:
-            unique_others.rename(columns={'d_o': 'distance_to_bdbiar'}, inplace=True)
-        
-        gdf_official_library = pd.concat([matched_in_step1, unique_others], ignore_index=True)
-        
-        if 'distance_to_bdbiar' not in gdf_official_library.columns:
-            gdf_official_library['distance_to_bdbiar'] = np.nan
-        
-        if 'index_right' in gdf_official_library.columns:
-            gdf_official_library.drop(columns=['index_right'], inplace=True, errors='ignore')
-        
+        from data_quality import match_bdbiar_points
+        gdf_official_library = match_bdbiar_points(gdf_base, gdf_bdbiar_reprojected, MAX_MATCH_DISTANCE)
+
         column_renames = {
             'ADDRESS_C': 'BDBIAR_ADDRESS_C',
             'NSEARCH5_C': 'BDBIAR_CLASS',
@@ -572,7 +516,8 @@ def build_official_library(dfs_landsd, gdf_bdbiar, use_address_similarity=False)
     if available_cols:
         print(gdf_official_library[available_cols].head().to_markdown())
     
-    gdf_official_library.to_file(OFFICIAL_LIBRARY_PATH, driver='GeoJSON')
+    gdf_official_library = gpd.GeoDataFrame(gdf_official_library, geometry='geometry').set_crs(gdf_base.crs, allow_override=True)
+    gdf_official_library.to_file(OFFICIAL_LIBRARY_PATH, driver='GeoJSON', AUTODETECT_JSON_STRINGS='NO')
     
     return gdf_official_library
 
@@ -971,174 +916,60 @@ def spatial_join_with_index(gdf1, gdf2, **kwargs):
     return gpd.sjoin(gdf1, gdf2, **kwargs)
 
 def main():
-    
-    if not check_data_preprocessing_dependencies():
-        return False
-    
-    print_memory_usage("Start")
-    dfs_landsd, gdf_bdbiar, gdf_osm_buildings, gdf_osm_pois = load_all_data()
-    print_memory_usage("After loading data")
-    
-    inspect_data(dfs_landsd, gdf_bdbiar, gdf_osm_buildings, gdf_osm_pois)
-    
-    gdf_official_library = build_official_library(dfs_landsd, gdf_bdbiar)
-    print_memory_usage("After building official library")
+    from pathlib import Path
+    import shapely
+    from config import OSM_SOURCE_SNAPSHOT, OSM_ALL_PATH, OVERTURE_CLEAN_PATH, OVERTURE_PARQUET_FILE_PATH
+    from data_quality import repair_footprints, ids, require_unique
+    from utils import sanitize_dataframe_for_geojson
 
-    import glob
-    from shapely.geometry import Polygon
-    
-    def load_ozp_data(ozp_dir):
-        features = []
-        json_files = glob.glob(os.path.join(ozp_dir, "*.json"))
-        if not json_files:
-            return gpd.GeoDataFrame()
-        
-        for f in tqdm(json_files, desc="Parsing OZP files"):
-            with open(f, 'r', encoding='utf-8') as file:
-                try:
-                    data = json.load(file)
-                    for feat in data.get('features', []):
-                        attr = feat.get('attributes', {})
-                        geom = feat.get('geometry', {})
-                        if 'rings' in geom and len(geom['rings']) > 0:
-                            poly = Polygon(geom['rings'][0])
-                            features.append({
-                                'geometry': poly, 
-                                'OZP_ZONE_LABEL': attr.get('ZONE_LABEL', ''),
-                                'OZP_DESC_ENG': attr.get('DESC_ENG', '')
-                            })
-                except Exception as e:
-                    pass
-        return gpd.GeoDataFrame(features, crs="EPSG:2326") if features else gpd.GeoDataFrame()
-
-    gdf_ozp = load_ozp_data(OZP_DATA_DIR)
-    if not gdf_ozp.empty:
-        gdf_centroids = gdf_official_library.copy()
-        gdf_centroids['geometry'] = gdf_centroids.geometry.centroid
-        
-        joined = gpd.sjoin(gdf_centroids, gdf_ozp[['geometry', 'OZP_ZONE_LABEL', 'OZP_DESC_ENG']], how='left', predicate='intersects')
-        
-        joined = joined[~joined.index.duplicated(keep='first')]
-        
-        gdf_official_library['OZP_ZONE_LABEL'] = joined['OZP_ZONE_LABEL']
-        gdf_official_library['OZP_DESC_ENG'] = joined['OZP_DESC_ENG']
-        
-        matched_count = gdf_official_library['OZP_ZONE_LABEL'].notna().sum()
-    else:
-        pass
-
-    
-    objects_to_clean = []
-    if 'gdf_osm_buildings' in locals():
-        objects_to_clean.append(gdf_osm_buildings)
-    if 'gdf_osm_pois' in locals():
-        objects_to_clean.append(gdf_osm_pois)
-    
-    for obj in objects_to_clean:
-        if obj is not None:
-            del obj
-    
-    import gc
-    collected = gc.collect()
-
-    if 'dfs_landsd' in locals():
-        for key in list(dfs_landsd.keys()):
-            if key != 'BUILDING_STRUCTURE':
-                del dfs_landsd[key]
-        collected = gc.collect()
-
-    print_memory_usage("After cleaning intermediate data")
-
-    gdf_official_library, issues = validate_and_fix_data_integrity(gdf_official_library)
-    if issues:
-        for issue in issues:
-            print(f"  - {issue}")
-    
-    
-    micro_anatomy(gdf_official_library)
-    
-    if gdf_official_library.crs is None:
-        gdf_official_library = gdf_official_library.set_crs("EPSG:2326")
-    
-    gdf_official_library = fix_missing_distance_data(gdf_official_library, gdf_bdbiar)
-
-    deep_validation(gdf_official_library)
-
-    investigate_unmatched_bd(gdf_official_library, gdf_bdbiar)
-
-    reverse_traceability(gdf_official_library, gdf_bdbiar)
-
-
-
-    if not gdf_official_library.empty:
-        gdf_official_library.to_file(OFFICIAL_LIB_BASE_PATH, driver='GeoJSON')
-    else:
-        pass
-
-    if not gdf_official_library.empty:
-        gdf_official_library, issues = validate_and_fix_data_integrity(gdf_official_library)
-        
-        if gdf_official_library.crs is None:
-            gdf_official_library = gdf_official_library.set_crs("EPSG:2326")
-        
-        try:
-            bounds = gdf_official_library.total_bounds
-        except Exception as e:
-            backup_path = OFFICIAL_LIBRARY_PATH.replace('.geojson', '_backup.geojson')
-            gdf_official_library.to_file(backup_path, driver='GeoJSON')
-        
-        try:
-            gdf_official_library.to_file(OFFICIAL_LIBRARY_PATH, driver='GeoJSON')
-        except Exception as e:
-            shp_path = OFFICIAL_LIBRARY_PATH.replace('.geojson', '.shp')
-            gdf_official_library.to_file(shp_path)
-    else:
-        pass
-
-    if not gdf_osm_buildings.empty or not gdf_osm_pois.empty:
-        gdf_osm_all = pd.concat([gdf_osm_buildings, gdf_osm_pois], ignore_index=True)
-        if 'id' in gdf_osm_all.columns:
-            gdf_osm_all.rename(columns={'id': 'osmid'}, inplace=True)
-        
-        gdf_osm_all.to_file(OSM_ALL_PATH, driver='GeoJSON')
-    else:
-        pass
-
-
-    from config import OVERTURE_PARQUET_FILE_PATH, OVERTURE_CLEAN_PATH
-    
-    gdf_overture = load_overture_places(OVERTURE_PARQUET_FILE_PATH)
-    
-    if not gdf_overture.empty:
-        gdf_overture.to_file(OVERTURE_CLEAN_PATH, driver="GeoJSON")
-    else:
-        pass
-
-
-
-    if not gdf_bdbiar.empty:
-        gdf_bdbiar.to_file(BDBIAR_CACHE_PATH, driver='GeoJSON')
-    else:
-        pass
-
-    if not os.path.exists(AGGREGATED_GDF_PATH):
-        empty_gdf = gpd.GeoDataFrame(columns=['BUILDINGSTRUCTUREID', 'geometry'], crs="EPSG:2326")
-        empty_gdf.to_file(AGGREGATED_GDF_PATH, driver='GeoJSON')
-    else:
-        pass
-    
-    if os.path.exists(OFFICIAL_LIB_BASE_PATH):
-        pass
-    else:
-        pass
-    
-    
-    
-    
-    final_memory = print_memory_usage("Final")
-    if final_memory:
-        pass
-    
+    tables = {}
+    for name, path in FILE_PATHS_LANDSD.items():
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+        tables[name] = load_landsd_json(path, is_geo=name == 'BUILDING_STRUCTURE')
+        if tables[name].empty:
+            raise ValueError(f'Empty LandsD input: {name}')
+        if 'BUILDINGSTRUCTUREID' in tables[name]:
+            tables[name]['BUILDINGSTRUCTUREID'] = ids(tables[name]['BUILDINGSTRUCTUREID'])
+    tables['BUILDING_STRUCTURE'] = repair_footprints(tables['BUILDING_STRUCTURE'])
+    bdbiar = load_bdbiar_csv_as_gdf(BDBIAR_FILE_PATH)
+    if bdbiar.empty:
+        raise ValueError('BDBIAR input failed to load')
+    official = build_official_library(tables, bdbiar)
+    require_unique(official)
+    zones = []
+    for file in sorted(Path(OZP_DATA_DIR).glob('*.json')):
+        zone = gpd.read_file(file)
+        if not zone.empty:
+            if zone.crs is None:
+                raise ValueError(f'Missing OZP CRS: {file.name}')
+            zone = zone.to_crs(official.crs)
+            zone['OZP_ZONE_LABEL'] = zone['ZONE_LABEL']
+            zone['OZP_DESC_ENG'] = zone['DESC_ENG']
+            zones.append(zone[['geometry', 'OZP_ZONE_LABEL', 'OZP_DESC_ENG']])
+    if not zones:
+        raise ValueError('No valid OZP inputs')
+    zones = gpd.GeoDataFrame(pd.concat(zones, ignore_index=True), crs=official.crs)
+    invalid = ~zones.geometry.is_valid
+    zones.loc[invalid, 'geometry'] = zones.loc[invalid, 'geometry'].map(shapely.make_valid)
+    points = official[['BUILDINGSTRUCTUREID', 'geometry']].copy()
+    points.geometry = points.geometry.representative_point()
+    joined = gpd.sjoin(points, zones, how='left', predicate='intersects')
+    selected = joined.sort_values(['BUILDINGSTRUCTUREID', 'index_right'], kind='stable').drop_duplicates('BUILDINGSTRUCTUREID')
+    attributes = selected[['BUILDINGSTRUCTUREID', 'OZP_ZONE_LABEL', 'OZP_DESC_ENG']]
+    official = official.merge(attributes, on='BUILDINGSTRUCTUREID', how='left', validate='one_to_one')
+    for path in [OFFICIAL_LIBRARY_PATH, OFFICIAL_LIB_BASE_PATH]:
+        sanitize_dataframe_for_geojson(official).to_file(path, driver='GeoJSON', AUTODETECT_JSON_STRINGS='NO')
+    bdbiar.to_file(BDBIAR_CACHE_PATH, driver='GeoJSON')
+    if not os.path.exists(OSM_SOURCE_SNAPSHOT):
+        raise FileNotFoundError('Frozen OSM source snapshot missing; see README acquisition manifest')
+    osm = gpd.read_file(OSM_SOURCE_SNAPSHOT)
+    osm.to_file(OSM_ALL_PATH, driver='GeoJSON')
+    overture = load_overture_places(OVERTURE_PARQUET_FILE_PATH)
+    if overture.empty:
+        raise ValueError('Overture input failed to load')
+    overture.to_file(OVERTURE_CLEAN_PATH, driver='GeoJSON')
+    print(f'[INFO] Step 1: {len(official)} buildings; raw dimensions preserved; permit scope checked')
     return True
 
 class Logger(object):
@@ -1161,7 +992,8 @@ class Logger(object):
         return True
 
 if __name__ == "__main__":
-    log_dir = os.path.join(BASE_DIR, "log")
+    from config import LOG_DIR
+    log_dir = LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, "1.data_preprocessing.txt")
     

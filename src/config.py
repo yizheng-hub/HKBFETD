@@ -5,12 +5,20 @@
 import os
 import json
 
+# Preserve array-valued source evidence when reading GeoJSON through GDAL.
+os.environ.setdefault("OGR_GEOJSON_ARRAY_AS_STRING", "YES")
+
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 DATA_DIR = os.path.join(BASE_DIR, "data")
-INTERMEDIATE_DIR = os.path.join(BASE_DIR, "intermediate_files")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-LOG_DIR = os.path.join(BASE_DIR, "log")
+RELEASE_VERSION = "v2"
+# A replay can use a separate directory; published v1/v1.1 are read-only inputs.
+RUN_ROOT = os.path.abspath(os.getenv("HKBFETD_RUN_ROOT", BASE_DIR))
+LEGACY_INTERMEDIATE_DIR = os.path.join(BASE_DIR, "intermediate_files")
+LEGACY_OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+INTERMEDIATE_DIR = os.path.join(RUN_ROOT, "intermediate_files", RELEASE_VERSION)
+OUTPUT_DIR = os.path.join(RUN_ROOT, "output", RELEASE_VERSION)
+LOG_DIR = os.path.join(RUN_ROOT, "log", RELEASE_VERSION)
 CTL_DIR = os.path.join(BASE_DIR, "ctl")
 VERIFICATION_DIR = os.path.join(INTERMEDIATE_DIR, "validation_materials")
 QUALITY_CHECK_DIR = os.path.join(INTERMEDIATE_DIR, "quality_checks")
@@ -60,6 +68,14 @@ OFFICIAL_LIB_BASE_PATH = os.path.join(INTERMEDIATE_DIR, "step1_official_building
 AGGREGATED_GDF_PATH = os.path.join(INTERMEDIATE_DIR, "step2_osm_aggregated_buildings.geojson")
 OSM_CLEAN_PATH = os.path.join(INTERMEDIATE_DIR, "step2_osm_features_clean.geojson")
 OSM_ALL_PATH = os.path.join(INTERMEDIATE_DIR, "step1_osm_features_all.geojson")
+OSM_SOURCE_SNAPSHOT = os.path.join(DATA_DIR, "sources", "osm_features_snapshot.geojson")
+TERRAIN_SAMPLES_PATH = os.path.join(DATA_DIR, "sources", "landsd_dtm_building_points.csv")
+TERRAIN_METADATA_PATH = os.path.join(DATA_DIR, "sources", "landsd_dtm_building_points.metadata.json")
+CSDI_BUILDINGS_PATH = os.path.join(DATA_DIR, "sources", "csdi_framework_mirror_20261023.parquet")
+CSDI_METADATA_PATH = os.path.join(DATA_DIR, "sources", "csdi_framework_mirror_20261023.metadata.json")
+OSM_STRUCTURES_PATH = os.path.join(DATA_DIR, "sources", "osm_structural_objects_20260420.parquet")
+OSM_STRUCTURES_METADATA_PATH = os.path.join(DATA_DIR, "sources", "osm_structural_objects_20260420.metadata.json")
+VERIFIED_STRUCTURES_PATH = os.path.join(CTL_DIR, "verified_structure_evidence.csv")
 BDBIAR_CACHE_PATH = os.path.join(INTERMEDIATE_DIR, "step1_bdbiar_points.geojson")
 CANDIDATES_PAIRS_PATH = os.path.join(INTERMEDIATE_DIR, "step6_geometry_candidate_pairs.csv")
 CANDIDATES_RULES_PATH = os.path.join(INTERMEDIATE_DIR, "step6_geometry_candidates_with_rules_and_images.csv")
@@ -91,8 +107,8 @@ ML_FINAL_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step9_ml_calibrated_classificat
 ML_FINAL_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step9_ml_calibrated_classification.geojson")
 STEP5_MERGED_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "step5_merged_classification.csv")
 STEP5_MERGED_OUTPUT_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "step5_merged_classification.geojson")
-PUBLIC_DATASET_CSV_PATH = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1_1.csv")
-PUBLIC_DATASET_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "HK_UBEM_Buildings_Public_v1_1.geojson")
+PUBLIC_DATASET_CSV_PATH = os.path.join(OUTPUT_DIR, "HKBFETD_v2.csv")
+PUBLIC_DATASET_GEOJSON_PATH = os.path.join(OUTPUT_DIR, "HKBFETD_v2.geojson")
 UNKNOWN_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step3_rule_engine_unknowns_map.html")
 ISLANDS_MAP_PATH = os.path.join(QUALITY_CHECK_HTML_DIR, "step2_information_islands_map.html")
 AGGREGATION_STATISTICS_PATH = os.path.join(QUALITY_CHECK_DIR, "step2_aggregation_statistics.png")
@@ -133,13 +149,13 @@ VISUALIZATION_DPI = 150
 HIGH_CONFIDENCE_SOURCES = [
     'OSM_Aggregation', 'BDBIAR', 'Keyword', 'Keyword_Priority', 
     'LandsD_Category', 'Inherited_via_Consensus_merge',
-    'Machine_Learning', 'Corrected_by_Rule'
+    'Corrected_by_Rule'
 ]
 
 AI_PROMPT_PATH = os.path.join(CTL_DIR, "ai_calibration_prompt.txt")
 AI_DECISION_BATCH_SAVE = 10
 
-RUN_AI_GENERATION = True
+RUN_AI_GENERATION = False
 SKIP_IMAGE_GENERATION_CHECK = True
 SKIP_ALL_IMAGES_IF_EXIST = True
 FORCE_RECOMPUTE_FEATURES = True
@@ -148,21 +164,21 @@ IMAGE_SIZE_PIXELS = 5
 IMAGE_ZOOM_LEVEL = 19
 TARGET_LANDSD_BSID_TO_INVESTIGATE = 416429
 
-RUN_MICRO_ANATOMY = True
-RUN_DEEP_VALIDATION = True
-RUN_UNMATCHED_BD_INVESTIGATION = True
-RUN_FULL_EXPLORATION = True
-RUN_REVERSE_TRACEABILITY = True
-RUN_AGGREGATION_EVALUATION = True
-RUN_RULE_ENGINE_EVALUATION = True
-RUN_CANDIDATE_GENERATION = True
+RUN_MICRO_ANATOMY = False
+RUN_DEEP_VALIDATION = False
+RUN_UNMATCHED_BD_INVESTIGATION = False
+RUN_FULL_EXPLORATION = False
+RUN_REVERSE_TRACEABILITY = False
+RUN_AGGREGATION_EVALUATION = False
+RUN_RULE_ENGINE_EVALUATION = False
+RUN_CANDIDATE_GENERATION = False
 
 RULE_DECISION_MERGE_THRESHOLD = 0.3
 LGBM_RANDOM_STATE = 42
 LGBM_VERBOSE = -1
 RF_N_ESTIMATORS = 50
 TEST_SIZE_RATIO = 0.2
-LANDSD_CATEGORY_MAP_MAIN = {'2': '住宅类别', '3': '住宅类别', '4': '商业类别'}
+LANDSD_CATEGORY_MAP_MAIN = {'2': '住宅类别', '3': '住宅类别'}
 LANDSD_CATEGORY_MAP_SUB = {'2': '私人房屋', '3': '公共房屋'}
 GFA_DOMINANT_THRESHOLD = 0.99
 GFA_MIXED_THRESHOLD_LOWER = 0.1

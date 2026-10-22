@@ -1,0 +1,44 @@
+{
+  "primary_provider": "Hong Kong Lands Department / CSDI Building",
+  "primary_service": "https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637211194312_35158/MapServer/0",
+  "distributor": "AlreadyOpen/hk-buildings",
+  "distribution_repository": "https://github.com/AlreadyOpen/hk-buildings",
+  "frozen_download": "https://huggingface.co/datasets/alreadyopen/hk-buildings/resolve/77418616b40980f05f1c4bc884aca79068b3b72e/buildings.parquet",
+  "revision": "77418616b40980f05f1c4bc884aca79068b3b72e",
+  "retrieved_utc": "2026-10-22T16:40:07.321320+00:00",
+  "sha256": "f3246dcf5e94aab3c643991d597616894d3ca56035eb86968df379b6f61dd9c5",
+  "bytes": 41336255,
+  "height_definition": "Original BaseHeight and TopHeight elevations retained; publisher height_m ignored and recomputed during validation",
+  "verification": "Whole frozen file SHA256 matches distributor LFS object. Full ID/geometry/elevation comparisons performed; four example elevations checked independently against the official API. These are not independent height measurements.",
+  "records": 342195,
+  "building_csuid_unique": true,
+  "source_observation_dates": "not retained by distributor; retrieval date is not a survey date",
+  "primary_height_policy": "structural component TopHeight minus BaseHeight; ground-to-top retained separately",
+  "integration_match_policy": "Exact unique BuildingCSUID, compatible non-podium/podium type, valid source geometry and footprint IoU >=0.95; retain local footprints",
+  "official_api_case_checks": [
+    {
+      "local_building_id": "170369",
+      "base_mPD": 3.9,
+      "top_mPD": 380.7,
+      "storeys": null
+    },
+    {
+      "local_building_id": "181189",
+      "base_mPD": 7.0,
+      "top_mPD": 310.3,
+      "storeys": 65
+    },
+    {
+      "local_building_id": "192326",
+      "base_mPD": 29.4,
+      "top_mPD": 490.0,
+      "storeys": 103
+    },
+    {
+      "local_building_id": "87318",
+      "base_mPD": 951.2,
+      "top_mPD": 957.4,
+      "storeys": null
+    }
+  ]
+}

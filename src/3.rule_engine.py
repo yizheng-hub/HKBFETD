@@ -1,4 +1,4 @@
-﻿# rule_engine.py
+# rule_engine.py
 
 import os
 import sys
@@ -376,225 +376,9 @@ def detect_strong_commercial_podium(info, osm_records, keyword_tool):
 
 
 def calculate_area_proportions(info, osm_records=None, keyword_tool=None, return_trace=False):
-
-    recalc_trace = []
-    recalc_counts = {}
-
-
-    main_proportions = defaultdict(float)
-    sub_proportions = defaultdict(float)
-    
-    is_final_recalc = info.get('IS_FINAL_RECALC', False)
-    pre_main = str(info.get('Pre_Class_Main', '')).strip()
-    pre_sub = str(info.get('Pre_Class_Sub', '')).strip()
-    
-    if is_final_recalc and pre_main in ['住宅类别', '商业类别', '工业类别', '非评估类别']:
-        main_proportions[pre_main] = 1.0
-        
-        if pre_sub and pre_sub not in ['nan', '未知类别', '']:
-            sub_proportions[pre_sub] = 1.0
-        else:
-            default_subs = {
-                '住宅类别': '私人房屋（Private Housing）',
-                '商业类别': '其他商业（Other Commercial）',
-                '工业类别': '其他工业（Other Industrial）',
-                '非评估类别': '临时/杂项设施'
-            }
-            sub_proportions[default_subs.get(pre_main, '未知类别')] = 1.0
-            
-        if pre_main == '商业类别' and osm_records is not None and not osm_records.empty:
-            osm_sub_counts = Counter()
-
-            for _, row in osm_records.iterrows():
-                included, sub_cls, trace_tag = classify_podium_commercial_poi(row, keyword_tool)
-
-                poi_name = str(row.get('name', '')).strip()
-                amenity = str(row.get('amenity', '')).strip()
-                shop = str(row.get('shop', '')).strip()
-                building = str(row.get('building', '')).strip()
-
-                if included and sub_cls and sub_cls != '未知类别':
-                    osm_sub_counts[sub_cls] += 1
-                    recalc_trace.append({
-                        "name": poi_name,
-                        "amenity": amenity,
-                        "shop": shop,
-                        "building": building,
-                        "assigned_sub_class": sub_cls,
-                        "trace_rule": trace_tag
-                    })
-
-            recalc_counts = dict(osm_sub_counts)
-
-            if sum(osm_sub_counts.values()) > 0:
-                sub_proportions.clear()
-                total_pois = sum(osm_sub_counts.values())
-                for sub_cls, count in osm_sub_counts.items():
-                    sub_proportions[str(sub_cls)] = round(count / total_pois, 4)
-                    
-        if return_trace:
-            return dict(main_proportions), dict(sub_proportions), recalc_trace, recalc_counts
-        return dict(main_proportions), dict(sub_proportions)
-
-    def get_safe_gfa(val):
-        if pd.isna(val) or val is None or str(val).strip() == '' or str(val).lower() == 'nan':
-            return 0.0
-        try:
-            v = float(val)
-            import math
-            return 0.0 if math.isnan(v) else v
-        except:
-            return 0.0
-            
-    dom_gfa = get_safe_gfa(info.get('GFA_DOMESTIC_SUM'))
-    nondom_gfa = get_safe_gfa(info.get('GFA_NONDOMESTIC_SUM'))
-    total_gfa = dom_gfa + nondom_gfa
-    
-    if total_gfa <= 0:
-        num_floors = 0
-        csv_floors = info.get('NUMABOVEGROUNDSTOREYS', 0)
-        
-        if pd.notna(csv_floors) and str(csv_floors).strip() != '':
-            try:
-                num_floors = float(csv_floors)
-            except ValueError:
-                pass
-                
-        if num_floors <= 0:
-            top_height = info.get('TOPHEIGHT', 0)
-            base_height = info.get('BASEHEIGHT', 0)
-            try:
-                th = float(top_height) if pd.notna(top_height) else 0.0
-                bh = float(base_height) if pd.notna(base_height) else 0.0
-                building_height = th - bh if (th - bh) > 0 else th
-                if building_height > 0:
-                    FLOOR_HEIGHT_ESTIMATE = 3.0
-                    num_floors = max(1, round(building_height / FLOOR_HEIGHT_ESTIMATE))
-            except ValueError:
-                pass
-                
-        if num_floors <= 0:
-            num_floors = 5 
-            
-        if num_floors > 1:
-            commercial_ratio = 1.0 / num_floors
-        else:
-            commercial_ratio = 1.0
-            
-        residential_ratio = 1.0 - commercial_ratio
-        
-        if residential_ratio > 0:
-            main_proportions['住宅类别'] = residential_ratio
-        if commercial_ratio > 0:
-            main_proportions['商业类别'] = commercial_ratio
-        
-        if residential_ratio > 0:
-            res_sub_class = info.get('Pre_Class_Sub')
-            if pd.isna(res_sub_class) or str(res_sub_class).strip() == 'nan' or not res_sub_class:
-                res_sub_class = '私人房屋（Private Housing）'
-            sub_proportions[str(res_sub_class)] = residential_ratio
-        
-        if commercial_ratio > 0:
-            if osm_records is not None and len(osm_records) > 0:
-                osm_sub_counts = Counter()
-                for _, row in osm_records.iterrows():
-                    if str(row.get('amenity', '')).lower() in ['nan', 'none', 'null', ''] and \
-                       str(row.get('shop', '')).lower() in ['nan', 'none', 'null', '']:
-                        continue
-                    m, s = classify_osm_feature(row, keyword_tool)
-                    s_std = standardize_sub_class(s)
-                    if m == '商业类别' and s_std != '未知类别':
-                        osm_sub_counts[s_std] += 1
-                
-                total_pois = sum(osm_sub_counts.values())
-                if total_pois > 0:
-                    for sub_cls, count in osm_sub_counts.items():
-                        poi_share = (count / total_pois) * commercial_ratio
-                        sub_proportions[str(sub_cls)] = round(poi_share, 4)
-                else:
-                    sub_proportions['其他商业（Other Commercial）'] = commercial_ratio
-            else:
-                sub_proportions['其他商业（Other Commercial）'] = commercial_ratio
-
-    else:
-        res_ratio = dom_gfa / total_gfa
-        nondom_ratio = nondom_gfa / total_gfa
-        
-        if res_ratio > 0:
-            main_proportions['住宅类别'] = res_ratio
-            
-        if nondom_ratio > 0:
-            if osm_records is not None and not osm_records.empty:
-                osm_main_classes = []
-                osm_weights = []
-                for _, row in osm_records.iterrows():
-                    m, s = classify_osm_feature(row, keyword_tool)
-                    if m in ['商业类别', '工业类别']:
-                        osm_main_classes.append(m)
-                        weight = float(row.get('osm_weight_score', 1.0)) * (row.get('osm_area', 1.0) or 1.0)
-                        osm_weights.append(weight)
-                
-                if osm_main_classes:
-                    total_weight = sum(osm_weights) or 1.0
-                    commercial_weight = sum(w for m, w in zip(osm_main_classes, osm_weights) if m == '商业类别')
-                    industrial_weight = sum(w for m, w in zip(osm_main_classes, osm_weights) if m == '工业类别')
-                    
-                    commercial_ratio = (commercial_weight / total_weight) * nondom_ratio
-                    industrial_ratio = (industrial_weight / total_weight) * nondom_ratio
-                    
-                    if commercial_ratio > 0:
-                        main_proportions['商业类别'] = commercial_ratio
-                    if industrial_ratio > 0:
-                        main_proportions['工业类别'] = industrial_ratio
-                else:
-                    main_proportions['商业类别'] = nondom_ratio
-            else:
-                main_proportions['商业类别'] = nondom_ratio
-                
-        if osm_records is not None and not osm_records.empty:
-            for main_class in ['住宅类别', '商业类别', '工业类别']:
-                if main_class not in main_proportions or main_proportions[main_class] == 0:
-                    continue
-                
-                main_osm_records = osm_records[osm_records.apply(
-                    lambda x: classify_osm_feature(x, keyword_tool)[0] == main_class, axis=1
-                )]
-                
-                if main_osm_records.empty:
-                    default_sub = {'住宅类别': '私人房屋（Private Housing）', '商业类别': '其他商业（Other Commercial）', '工业类别': '其他工业（Other Industrial）'}.get(main_class)
-                    if default_sub:
-                        sub_proportions[default_sub] = main_proportions[main_class]
-                    continue
-                
-                sub_counts = Counter()
-                total_sub_weight = 0.0
-                for _, row in main_osm_records.iterrows():
-                    _, s = classify_osm_feature(row, keyword_tool)
-                    s_std = standardize_sub_class(s)
-                    if s_std != '未知类别':
-                        weight = float(row.get('osm_weight_score', 1.0)) * (row.get('osm_area', 1.0) or 1.0)
-                        sub_counts[str(s_std)] += weight
-                        total_sub_weight += weight
-                
-                if total_sub_weight > 0:
-                    main_ratio = main_proportions[main_class]
-                    for sub_class, weight in sub_counts.items():
-                        sub_proportions[str(sub_class)] = (weight / total_sub_weight) * main_ratio
-                else:
-                    default_sub = {'住宅类别': '私人房屋（Private Housing）', '商业类别': '其他商业（Other Commercial）', '工业类别': '其他工业（Other Industrial）'}.get(main_class)
-                    if default_sub:
-                        sub_proportions[default_sub] = main_proportions[main_class]
-        else:
-            if '住宅类别' in main_proportions:
-                sub_proportions['私人房屋（Private Housing）'] = main_proportions['住宅类别']
-            if '商业类别' in main_proportions:
-                sub_proportions['其他商业（Other Commercial）'] = main_proportions['商业类别']
-            if '工业类别' in main_proportions:
-                sub_proportions['其他工业（Other Industrial）'] = main_proportions['工业类别']
-
-    if return_trace:
-        return dict(main_proportions), dict(sub_proportions), recalc_trace, recalc_counts
-    return dict(main_proportions), dict(sub_proportions)
+    # Quantitative shares are constructed only by finalize_function_fields from
+    # scoped registered areas. POI votes are retained as classification evidence.
+    return ({}, {}, [], {}) if return_trace else ({}, {})
 
 
 
@@ -653,10 +437,10 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     STRONG_KEYWORDS = keyword_tool.get('strong_keywords', set())
 
     LANDSD_MAP = {
-        '1': {'main': '住宅类别', 'sub': '私人房屋（Private Housing）', 'desc': '合法私人建筑'},
+        '1': {'main': None, 'sub': None, 'desc': '法律管辖类别不表示建筑功能'},
         '2': {'main': '住宅类别', 'sub': '私人房屋（Private Housing）', 'desc': '新界小型屋宇'},
         '3': {'main': '住宅类别', 'sub': '公共房屋（Public Housing）', 'desc': '房委会建筑'},
-        '4': {'main': '商业类别', 'sub': '其他商业（Other Commercial）', 'desc': '政府物业'},
+        '4': {'main': None, 'sub': None, 'desc': '政府产权不表示建筑功能'},
         '5': {'main': None, 'sub': None, 'desc': '杂项结构需具体分析'},
         '9': {'main': None, 'sub': None, 'desc': '未分类'}
     }
@@ -683,16 +467,16 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     if total_gfa > 20:
         dom_ratio = dom_gfa / total_gfa
         if dom_ratio > 0.99:
-            evidences.append({'src': 'GFA', 'main': '住宅类别', 'sub': '私人房屋（Private Housing）', 'conf': 1.0, 'weight': 100})
+            evidences.append({'src': 'GFA', 'main': '住宅类别', 'sub': None, 'conf': 1.0, 'weight': 100})
             result['Main_Class_Proportions'] = '住宅类别:1.00'
-            result['Sub_Class_Proportions'] = '私人房屋（Private Housing）:1.00'
         elif dom_ratio < 0.01:
-            evidences.append({'src': 'GFA', 'main': '商业类别', 'sub': None, 'conf': 0.9, 'weight': 80, 'note': '非住宅GFA'})
+            pass  # Non-domestic floor area does not distinguish commercial from industrial use.
         else:
             evidences.append({'src': 'GFA', 'main': '混合用途', 'sub': None, 'conf': 1.0, 'weight': 100})
             result['Is_Mixed_Use'] = True
 
-    bdb_main, bdb_sub = classify_from_bdbiar_final(info.get('BDBIAR_CLASS'))
+    bdb_reliable = info.get('BDBIAR_Match_Quality') == 'inside_unique'
+    bdb_main, bdb_sub = classify_from_bdbiar_final(info.get('BDBIAR_CLASS') if bdb_reliable else None)
     if bdb_main:
         evidences.append({'src': 'BDBIAR', 'main': standardize_main_class(bdb_main), 'sub': standardize_sub_class(bdb_sub), 'conf': 0.6, 'weight': 60})
 
@@ -722,10 +506,8 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             m, s_sub = classify_osm_feature(row, keyword_tool, use_case='rule_engine')
             
             if not a_clean and not s_clean:
-                if b_clean in ['apartments', 'residential', 'house', 'yes']:
-                    m, s_sub = '住宅类别', '私人房屋（Private Housing）'
-                    if '邨' in poi_name or '邨' in str(info.get('BUILDINGNAMETC', '')):
-                        s_sub = '公共房屋（Public Housing）'
+                if b_clean in ['apartments', 'residential', 'house']:
+                    m, s_sub = '住宅类别', '未知类别'
                 elif not b_clean:
                     m = '未知类别'
             m_std = standardize_main_class(m)
@@ -754,6 +536,8 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
 
     cat_code = str(info.get('CATEGORY', ''))
     landsd_info = LANDSD_MAP.get(cat_code, {'main': None})
+    if cat_code == '3' and str(info.get('BUILDINGSTRUCTURETYPE','')) != 'T':
+        landsd_info = {'main': None}
     if landsd_info['main'] is not None:
         weight = 50
         if landsd_info['main'] == '非评估类别':
@@ -775,7 +559,7 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
 
     all_text_sources = [
         safe_str(info.get('BUILDINGNAMETC', '')), safe_str(info.get('BUILDINGNAMEEN', '')),
-        safe_str(info.get('ALL_INFO_DESC', '')), safe_str(info.get('BDBIAR_ADDRESS_C', '')), safe_str(info.get('name', ''))
+        safe_str(info.get('ALL_INFO_DESC', '')), safe_str(info.get('BDBIAR_ADDRESS_C', '')) if bdb_reliable else '', safe_str(info.get('name', ''))
     ]
     text_for_kw = " ".join([t for t in all_text_sources if t.strip()])
     kws, clfs = classify_text_by_keywords(text_for_kw, keyword_tool['keyword_regex'], keyword_tool['keyword_map'])
@@ -800,7 +584,7 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             
             if any(k in STRONG_KEYWORDS for k in kws): current_weight = 90
             
-            if main_std == '商业类别' and cat_code in ['1', '2', '3'] and current_weight == 50:
+            if main_std == '商业类别' and cat_code in ['2', '3'] and current_weight == 50:
                 current_weight = 10
             
             if current_weight > max_kw_weight:
@@ -812,9 +596,8 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     if cat_code == '9' and len(evidences) == 0:
         text_for_name = f"{info.get('BUILDINGNAMETC', '')} {info.get('BUILDINGNAMEEN', '')}".lower()
         name_keywords = {
-            'station': ('非评估类别', '交通基础设施', 65), 'restaurant': ('商业类别', '食肆（Restaurant）', 70),
+            'restaurant': ('商业类别', '食肆（Restaurant）', 70),
             'school': ('商业类别', '教育（Education）', 70), 'hospital': ('商业类别', '医疗（Human Health）', 70),
-            'garden': ('住宅类别', '私人房屋（Private Housing）', 60), 'estate': ('住宅类别', '私人房屋（Private Housing）', 60),
             'factory': ('工业类别', '其他工业（Other Industrial）', 70), 'warehouse': ('工业类别', '非制造业（Non-manufacturing）', 70),
             'noise': ('非评估类别', '绝对噪声相关', 70), 'temporary': ('非评估类别', '临时/杂项设施', 70)
         }
@@ -822,6 +605,13 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
                           for k, (m, s, w) in name_keywords.items() if k in text_for_name], 
                          key=lambda x: x['weight'], default=None)
         if best_match: evidences.append(best_match)
+
+    evidence_weights = defaultdict(float)
+    for item in evidences:
+        if item['sub'] and item['sub'] != '未知类别':
+            evidence_weights[item['sub']] += item['weight']
+    from classification import format_weights, sub_label, UNKNOWN
+    result['Evidence_Subclass_Weights'] = format_weights({sub_label(k):v for k,v in evidence_weights.items() if sub_label(k)!=UNKNOWN})
 
     if any(ev['src'] == 'GFA' and ev['main'] == '混合用途' for ev in evidences):
         result['Final_Main_Class'] = '混合用途'
@@ -845,7 +635,7 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     for item in evidences: score_board[item['main']] += item['weight']
     
     if sum(score_board.values()) < 30:
-        default_map = {'1': ('住宅类别', '私人房屋（Private Housing）'), '2': ('住宅类别', '私人房屋（Private Housing）'), '3': ('住宅类别', '公共房屋（Public Housing）'), '4': ('商业类别', '其他商业（Other Commercial）')}
+        default_map = {'2': ('住宅类别', '私人房屋（Private Housing）')}
         result['Final_Main_Class'], result['Final_Sub_Class'] = default_map.get(cat_code, ('未知类别', '未知类别'))
         result['Classification_Source'], result['Confidence_Score'] = '低证据推断', 0.4
         result['Evidence_Details'] = str([f"{e['src']}:{e['main']}({e['weight']})" for e in evidences])
@@ -863,8 +653,8 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
         runner_up_main, runner_up_score = sorted_scores[1]
         if winner_main != '混合用途' and runner_up_main != '混合用途' and winner_score < runner_up_score * 1.5:
             is_conflicted = True
-            winner_main = '混合用途'
-            result['Is_Mixed_Use'] = True
+            winner_main = '未知类别'
+            result['Is_Mixed_Use'] = False
 
     override_to_commercial, podium_sub, podium_counts = detect_strong_commercial_podium(
         info, osm_records, keyword_tool
@@ -899,11 +689,7 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
                 best_sub = max(valid_subs, key=lambda x: x['weight']).get('sub')
                 result['Final_Sub_Class'] = standardize_sub_class(best_sub)
             else:
-                result['Final_Sub_Class'] = {
-                    '住宅类别': '私人房屋（Private Housing）',
-                    '商业类别': '其他商业（Other Commercial）',
-                    '工业类别': '其他工业（Other Industrial）'
-                }.get(winner_main, '未知类别')
+                result['Final_Sub_Class'] = '未知类别'
 
         source_str = "+".join(sorted(list(set(e['src'] for e in supporting_evidences)))) if supporting_evidences else "Fusion_Inferred"
     
@@ -923,7 +709,8 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     result['Final_Recalc_Commercial_POI_Trace'] = json.dumps(recalc_trace, ensure_ascii=False)
     result['Final_Recalc_Commercial_POI_Counts'] = json.dumps(recalc_counts, ensure_ascii=False)
 
-    result['Matched_POIs'] = format_recalc_trace_for_display(recalc_trace)
+    if recalc_trace:
+        result['Matched_POIs'] = format_recalc_trace_for_display(recalc_trace)
 
     result['Main_Class_Proportions'] = format_proportion_string(main_props)
     result['Sub_Class_Proportions'] = format_proportion_string(sub_props)
@@ -995,12 +782,7 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     name_str = (gdf_aggregated['BUILDINGNAMETC'].fillna('') + ' ' + gdf_aggregated['BUILDINGNAMEEN'].fillna('')).str.lower().apply(to_simplified_chinese)
     kw_mask = name_str.str.contains(noise_regex, regex=True, na=False) if noise_regex else pd.Series(False, index=gdf_aggregated.index)
     
-    is_tiny_area = gdf_aggregated['geometry'].area < 5
-    has_bdbiar = gdf_aggregated['BDBIAR_OBJECTID'].notna()
-    has_osm = gdf_aggregated['osmid'].notna()
-    has_valid_name = (gdf_aggregated['BUILDINGNAMETC'].str.len() > 1) | (gdf_aggregated['BUILDINGNAMEEN'].str.len() > 2)
-    
-    pre_screen_mask = kw_mask | (is_tiny_area & ~has_bdbiar & ~has_osm & ~has_valid_name)
+    pre_screen_mask = kw_mask
     
     gdf_aggregated.loc[pre_screen_mask, 'Classification_Stage'] = '已预筛选'
     
@@ -1081,6 +863,17 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     cols_to_drop = [c for c in df_rule_classified_final.columns if c.endswith('_base') or c.endswith('_result')]
     df_rule_classified_final.drop(columns=cols_to_drop, inplace=True, errors='ignore')
 
+    from classification import enrich_function_evidence
+    df_rule_classified_final = enrich_function_evidence(df_rule_classified_final, gdf_aggregated)
+    from config import OSM_STRUCTURES_PATH, OSM_STRUCTURES_METADATA_PATH, VERIFIED_STRUCTURES_PATH
+    from ai_cache import file_hash
+    from structural_use import apply_structural_use
+    with open(OSM_STRUCTURES_METADATA_PATH, encoding='utf-8') as stream:
+        structure_metadata = json.load(stream)
+    if file_hash(OSM_STRUCTURES_PATH) != structure_metadata['sha256']:
+        raise ValueError('Frozen structural-use source checksum mismatch')
+    df_rule_classified_final = apply_structural_use(df_rule_classified_final,
+        gpd.read_parquet(OSM_STRUCTURES_PATH), pd.read_csv(VERIFIED_STRUCTURES_PATH))
     output_cols = [c for c in df_rule_classified_final.columns if c != 'geometry']
     df_rule_classified_final[output_cols].to_csv(
         RULE_ENGINE_OUTPUT_PATH, index=False, encoding='utf-8-sig'
@@ -1093,7 +886,7 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
         if gdf_export[col].dtype == object and col != 'geometry':
             gdf_export[col] = gdf_export[col].astype(str)
             
-    gdf_export.to_file(geojson_output_path, driver='GeoJSON')
+    gdf_export.to_file(geojson_output_path, driver='GeoJSON', AUTODETECT_JSON_STRINGS='NO')
 
 
 
@@ -1233,7 +1026,8 @@ class Logger(object):
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(os.path.dirname(base_dir), "log")
+    from config import LOG_DIR
+    log_dir = LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, "3.rule_engine.txt")
     

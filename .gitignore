@@ -20,6 +20,12 @@ data/LandsD/**
 !data/OZP_Zones/
 data/OZP_Zones/**
 !data/OZP_Zones/.gitkeep
+!data/sources/
+data/sources/**
+!data/sources/source_manifest.json
+!data/sources/landsd_dtm_building_points.metadata.json
+!data/sources/csdi_framework_mirror_20261023.metadata.json
+!data/sources/osm_structural_objects_20260420.metadata.json
 
 # Keep output folder, but ignore everything inside by default.
 output/*
