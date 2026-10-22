@@ -222,3 +222,94 @@ def calculate_overlap_ratio(osm_geom, official_geom, config=None):
 def init_feature_keyword_tool(keywords_config):
     """Function documentation."""
     return init_keyword_tool()
+
+
+def canonicalize_main_class_label(value):
+    text = '' if pd.isna(value) else str(value).strip()
+    if not text or text.lower() in {'nan', 'none', 'null'}:
+        return 'Unknown_未知类别'
+    normalized = text.lower().replace('-', ' ')
+    for english, chinese in (
+        ('Residential', '住宅类别'),
+        ('Commercial', '商业类别'),
+        ('Industrial', '工业类别'),
+        ('Mixed-use', '混合用途'),
+        ('Non-assessed', '非评估类别'),
+        ('Unknown', '未知类别'),
+    ):
+        if chinese in text or english.lower().replace('-', ' ') in normalized:
+            return f'{english}_{chinese}'
+    return text
+
+
+_SUBCLASS_LABEL_ALIASES = None
+
+
+def canonicalize_sub_class_label(value):
+    global _SUBCLASS_LABEL_ALIASES
+    text = '' if pd.isna(value) else str(value).strip()
+    if not text or text.lower() in {'nan', 'none', 'null'}:
+        return 'Unknown_未知类别'
+    if '_' in text:
+        return text
+    if _SUBCLASS_LABEL_ALIASES is None:
+        from config import KEYWORDS_FILE
+        labels = {
+            'Unknown_未知类别',
+            'Absolute Noise_绝对噪声相关',
+            'Transport Infrastructure_交通基础设施',
+            'Temporary/Misc Facilities_临时/杂项设施',
+            'Mixed-use_混合用途',
+        }
+        with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
+            keywords = json.load(f)
+        aliases = {}
+        for subclasses in keywords.values():
+            if not isinstance(subclasses, dict):
+                continue
+            for label in subclasses:
+                match = re.fullmatch(r'([^()（）]+)[（(]([^()（）]+)[)）]', label)
+                if match:
+                    chinese, english = (part.strip() for part in match.groups())
+                    canonical = f'{english}_{chinese}'
+                    labels.add(canonical)
+                    aliases[label.casefold()] = canonical
+        for label in labels:
+            english, chinese = label.split('_', 1)
+            for alias in (label, english, chinese):
+                aliases[alias.casefold()] = label
+        _SUBCLASS_LABEL_ALIASES = aliases
+    if text.casefold() in _SUBCLASS_LABEL_ALIASES:
+        return _SUBCLASS_LABEL_ALIASES[text.casefold()]
+    return re.sub(
+        r'(?<!\w)([\u3400-\u9fff/、 ]+)[（(]([A-Za-z][^()（）]*)[)）]',
+        lambda match: f'{match.group(2).strip()}_{match.group(1).strip()}',
+        text,
+    )
+
+
+def normalize_classification_columns(df):
+    for column, normalize in (
+        ('Final_Main_Class', canonicalize_main_class_label),
+        ('Final_Sub_Class', canonicalize_sub_class_label),
+    ):
+        if column in df.columns:
+            df[column] = df[column].map(normalize)
+    return df
+
+
+def is_non_assessed_main(value):
+    return canonicalize_main_class_label(value) == 'Non-assessed_非评估类别'
+
+
+def sanitize_dataframe_for_geojson(df):
+    def serialize(value):
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, (dict, list, tuple)):
+            return json.dumps(value, ensure_ascii=False, default=str)
+        return value
+
+    for column in df.select_dtypes(include=['object', 'string']).columns:
+        df[column] = df[column].map(serialize)
+    return df
