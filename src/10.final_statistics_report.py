@@ -38,6 +38,10 @@ PROVENANCE = ['BUILDINGCSUID','NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT','
     'Height_Source_Comparison_QA','Component_Base_Above_Terrain_m',
     'CSDI_Base_Elevation_mPD','CSDI_Top_Elevation_mPD','CSDI_Reported_Storeys','CSDI_Basement_Storeys',
     'CSDI_Structure_Type','CSDI_Status','CSDI_Geometry_IoU','CSDI_Match_Quality',
+    'CSDI_Native_Building_ID','CSDI_Record_Created_Date','CSDI_Record_Updated_Date',
+    'Reported_Attribute_Evidence','Floors_Document_Evidence_IDs',
+    'Floors_Before_Document_Review','Floors_Source_Before_Document_Review',
+    'Documented_GFA_sqm','Documented_GFA_Evidence_IDs',
     'Structure_Use_Type','Structure_Use_Name','Structure_Use_Source','Structure_Use_Evidence','Structure_Use_Quality',
     'Energy_Assessment_Scope','Pre_Structure_Review_Main_Class','Pre_Structure_Review_Sub_Class',
     'Registered_GFA_sqm','Registered_GFA_Source','GFA_Proxy_sqm','GFA_Proxy_Method','GFA_Best_Available_sqm','GFA_Quality',
@@ -80,7 +84,10 @@ def validate_release(frame):
     assert frame.loc[tall_small,'Structure_Use_Type'].eq('bridge_structure').all(), 'Unexplained small/tall component requires resolution'
     ratio = (height/floors).dropna()
     assert ratio.between(1,20).all(), 'Reported storeys have unresolved component scope'
-    assert frame.loc[floors.notna(),'Floors_Source'].isin(['CSDI_reported_storeys','LandsD_storeys','OSM_building_levels']).all()
+    assert frame.loc[floors.notna(),'Floors_Source'].isin(['CSDI_reported_storeys','LandsD_storeys','OSM_building_levels','Documented_component_storeys']).all()
+    documented = frame.Floors_Source.eq('Documented_component_storeys')
+    assert frame.loc[documented,'Floors_Document_Evidence_IDs'].ne('[]').all()
+    assert frame.loc[documented,'CSDI_Match_Quality'].eq('same_component_id_type_footprint').all()
     for col in ['Registered_GFA_sqm','GFA_Proxy_sqm','GFA_Best_Available_sqm']:
         values = numbers(frame,col).dropna()
         assert (np.isfinite(values) & values.ge(0)).all(), 'Invalid floor area: '+col
@@ -138,6 +145,9 @@ def validate_release(frame):
 def generate_public_dataset(frame):
     columns = [c for c in list(EXPORT_MAPPING)+PROVENANCE if c in frame]
     public = frame[columns].rename(columns=EXPORT_MAPPING).copy()
+    for column in ['CSDI_Record_Created_Date','CSDI_Record_Updated_Date']:
+        raw_date = public[column].astype('string').str.replace(r'\.0$', '', regex=True)
+        public[column] = pd.to_datetime(raw_date,format='%Y%m%d',errors='coerce').dt.strftime('%Y-%m-%d')
     public['Dataset_Version'] = '2.0'
     public['Unknown_Value_Policy'] = 'null_with_quality_and_source_flags'
     # A nearest point is useful linkage evidence, not a verified building attribute.
@@ -350,7 +360,16 @@ def write_documentation(public,validation,comparison):
         'CSDI_Base_Elevation_mPD':'CSDI raw component base elevation in Hong Kong Principal Datum; may be a podium roof',
         'CSDI_Top_Elevation_mPD':'CSDI raw component top elevation in Hong Kong Principal Datum; spire/antenna conventions may differ',
         'CSDI_Reported_Storeys':'Original source-reported storeys, including withheld conflicts; not inferred from height',
-        'Floors_Source':'Reported CSDI/LandsD/OSM storeys only; height/3 is never used here',
+        'CSDI_Native_Building_ID':'BuildingID in the official CSDI snapshot; distinct from the local Building_ID_建筑ID',
+        'CSDI_Record_Created_Date':'Official record creation date as YYYY-MM-DD; not construction completion date; raw dates remain in frozen source',
+        'CSDI_Record_Updated_Date':'Official record timestamp as YYYY-MM-DD; not measurement or renovation date; raw dates remain in frozen source',
+        'Floors_Source':'Reported CSDI/LandsD/OSM or explicitly documented same-component storeys; height/3 is never used here',
+        'Reported_Attribute_Evidence':'JSON source facts with attribute-specific scope, unit, document date, source URL and adoption decision; unavailable/unharmonized values are not silently used as main fields',
+        'Floors_Document_Evidence_IDs':'JSON IDs of explicitly scoped aboveground component storey documents selected for the primary count',
+        'Floors_Before_Document_Review':'Count after ordinary source fusion and before documented component-count reconciliation',
+        'Floors_Source_Before_Document_Review':'Floor source/conflict state before documented component-count reconciliation',
+        'Documented_GFA_sqm':'Positive owner/source-reported gross floor area with explicit same-component scope; distinct from a registered area',
+        'Documented_GFA_Evidence_IDs':'JSON IDs of documents supporting the same-component gross floor area; lettable/saleable/office/internal areas do not qualify',
         'Structure_Use_Type':'Explicitly matched structural use: bridge, equipment or water-storage structure; empty is not reviewed/identified',
         'Structure_Use_Name':'Documented landmark/component name; original LandsD name is not overwritten',
         'Structure_Use_Source':'Official document plus spatial identification, or comparable unique OSM polygon with explicit structural tags',
@@ -363,7 +382,7 @@ def write_documentation(public,validation,comparison):
         'Floors_Height_Proxy':'Optional height/3 m estimate, nearest integer with half ties upward (ratio normalized to 9 decimals); excluded from reported storeys and GFA',
         'GFA_Proxy_sqm':'Geometric footprint times reported storeys; uniform floorplate assumption',
         'Registered_GFA_sqm':'Positive structure registration, otherwise uniquely scoped single-structure permit total',
-        'GFA_Best_Available_sqm':'Registered GFA preferred, otherwise uniform-floorplate proxy; compare with coverage',
+        'GFA_Best_Available_sqm':'Registered GFA preferred, then documented same-component GFA, then uniform-floorplate proxy; compare with coverage',
         'Observed_Main_Area_Proportions':'Scoped registered domestic/nondomestic areas mapped to inferred main functions; commercial/industrial mapping is conditional on the function inference, not an independent sector-area measurement',
         'Observed_Residential_Area_Share':'Scoped domestic GFA / (domestic + nondomestic GFA)',
         'Observed_Nondomestic_Area_Share':'Scoped nondomestic GFA / (domestic + nondomestic GFA); not automatically commercial',
@@ -392,7 +411,7 @@ def write_documentation(public,validation,comparison):
         'Terrain_Elevation_mPD':'Coordinate-checked single-point DTM elevation, not a surveyed building base',
         'Registered_GFA_Source':'Structure registration or uniquely scoped single-structure permit; missing otherwise',
         'GFA_Proxy_Method':'Uniform floorplate approximation or unknown/not applicable; no inferred height/3 storeys used',
-        'GFA_Quality':'Registered scope checked, uniform-floorplate proxy, unknown or nonbuilding not applicable',
+        'GFA_Quality':'Registered scope checked, documented component GFA, uniform-floorplate proxy, unknown or nonbuilding not applicable',
         'Permit_IDs':'JSON list of linked occupation permits; link multiplicity is retained',
         'Permit_GFA_Scope':'single_structure or shared_or_multiple_permits; shared totals are not allocated to every structure',
         'Permit_GFA_Usable':'True only for one structure/one permit with complete nonnegative positive-total GFA components',
@@ -443,7 +462,7 @@ def write_documentation(public,validation,comparison):
     }.items()})
     for main in MAIN_CLASSES:
         meanings[EXPORT_MAPPING['proba_'+main]] = 'Uncalibrated main-model probability for '+main+'; three probabilities sum to 1, never floor-area shares'
-    area_fields={'Source_Footprint_Area_sqm','Registered_GFA_sqm','GFA_Proxy_sqm','GFA_Best_Available_sqm',
+    area_fields={'Source_Footprint_Area_sqm','Registered_GFA_sqm','Documented_GFA_sqm','GFA_Proxy_sqm','GFA_Best_Available_sqm',
         'GFA_DOMESTIC_SUM','GFA_NONDOMESTIC_SUM',EXPORT_MAPPING['SHAPE_Area'],EXPORT_MAPPING['GROSSFLOORAREA']}
     elevation_fields={'TOPHEIGHT','BASEHEIGHT','Terrain_Elevation_mPD','CSDI_Base_Elevation_mPD','CSDI_Top_Elevation_mPD'}
     metre_fields={EXPORT_MAPPING['Estimated_Height'],EXPORT_MAPPING['distance_to_bdbiar'],'Ground_To_Top_Height_m',
@@ -461,7 +480,7 @@ def write_documentation(public,validation,comparison):
 主高度空值（缺失/冲突）：{validation['unknown_height_records']:,}；主层数空值（缺失/冲突/不适用）：{validation['unknown_floor_records']:,}。
 
 Height_m 主列采用结构本体高度：同一结构的顶部高程减底部高程，塔楼与裙楼分别计算。不是地面至顶部或建筑学尖顶高度。
-CSDI Building 原始高程经公开分发快照补充，按唯一 BuildingCSUID、结构类型及有效足迹交并比 >=0.95 匹配；原有足迹不替换。
+CSDI Building 原始高程由地政总署 2026-10-20 官方批量快照补充，按唯一 BuildingCSUID、结构类型及有效足迹交并比 >=0.95 匹配；原有足迹不替换。
 本版保持原 2025-02-06 建筑清单以便逐栋对照，不声称覆盖快照中所有新增或变更的建筑；未匹配及几何变化另作标记。
 公开分发者生成的 height_m 不使用；所有主高度直接由原始 BaseHeight/TopHeight 重算。快照版本、下载链接、SHA256 见 data/sources 元数据。
 原表 T 泛指非裙楼结构，CSDI 进一步区分 Tower、Open-sided Structure、Temporary Structure；原表 P 仅匹配 Podium。
@@ -469,14 +488,15 @@ Ground_To_Top_Height_m 单列保存地面至顶部估计，优先 CSDI 顶高减
 点地形证据采于 2026-08-30；单点采样、时间变化、屋顶/建筑学高度及不同来源的参考面限制仍存在。它不作为结构本体高度的缺失替代。
 ICC 塔楼底部在裙楼上，因此结构本体高度与地面至顶部高度不同；中银大厦结构顶高也不能代表包含尖顶的建筑学总高。
 OSM_Height_m 原标签值保留，单位按 OSM 规则解析；与本体高度不同可能源自参考面不同，仅标记复核，不混算或平均。
-Floors_Count 仅使用通过源间冲突检查的报告层数；Floors_Height_Proxy 是单独的 3 m 层高假设，未当作报告层数或面积计算依据。
+Floors_Count 使用通过源间冲突检查或明确组件文档调和后的报告层数；Floors_Height_Proxy 是单独的 3 m 层高假设，未当作报告层数或面积计算依据。
+逐栋文档中的塔楼、裙楼、整栋、附楼、楼层标签及不同面积口径分别记录在 Reported_Attribute_Evidence。中环广场75层、朗豪坊办公塔楼59层、泓富产业千禧广场32层有对应组件的文档证据，旧来源冲突值保留；并不把所有层都解释为已占用办公楼层。
 主层数与当前结构对应；OSM 整栋建筑层数可能包含裙楼，仅在结构底部与地形点相差不超过 3 m 时作为可比较候选，其余仅保留在 OSM_Storeys，不与官方结构层数混算。这个范围判断同样受地形采样误差限制。
 原始 NUMABOVEGROUNDSTOREYS、TOPHEIGHT、BASEHEIGHT 保留原值。
 空值表示无法可靠补齐；原因见 Height_Quality、Floors_Quality、Height_Source、Floors_Source。
 
 Registered_GFA_sqm 仅使用单体登记面积或范围通过检查的一栋建筑/一份许可证面积。
 共享/多份许可证的面积不擅自分摊；Permit_Group 等组级证据保存在阶段数据。
-GFA_Proxy_sqm 使用几何面积×报告层数，假设每层同样大小；GFA_Best_Available_sqm 优先登记面积，否则代理面积。
+GFA_Proxy_sqm 使用几何面积×报告层数，假设每层同样大小；GFA_Best_Available_sqm 优先登记面积，其次明确组件范围的文档GFA，再次代理面积。文档GFA不冒充注册面积；可出租、可售、单位内部面积不当作GFA。
 比较总量必须同时报告覆盖率；未知值增加不是香港实体建筑面积减少。
 
 UBEM_Mixed_Proportions 不再混入 POI 数量或模型概率；单功能的 1.0 是明确标记的 single_function_assumption。

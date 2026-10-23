@@ -826,8 +826,8 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
     if 'osmid' in gdf_aggregated.columns:
         matched_count = gdf_aggregated['osmid'].notna().sum()
     
-    from data_quality import fuse_dimensions
-    from config import TERRAIN_SAMPLES_PATH, CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH
+    from data_quality import fuse_dimensions, apply_documented_attributes
+    from config import TERRAIN_SAMPLES_PATH, CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH, DOCUMENTED_ATTRIBUTES_PATH
     from ai_cache import file_hash
     terrain = pd.read_csv(TERRAIN_SAMPLES_PATH) if os.path.exists(TERRAIN_SAMPLES_PATH) else None
     with open(CSDI_METADATA_PATH, encoding='utf-8') as stream:
@@ -836,6 +836,8 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
         raise ValueError('Frozen CSDI source checksum mismatch')
     csdi = gpd.read_parquet(CSDI_BUILDINGS_PATH)
     attributes = fuse_dimensions(gdf_official_library, gdf_aggregated, terrain, csdi)
+    evidence = pd.read_csv(DOCUMENTED_ATTRIBUTES_PATH, dtype=str, keep_default_na=False)
+    attributes = apply_documented_attributes(attributes, evidence)
     additional = [c for c in attributes if c not in gdf_official_library.columns]
     gdf_aggregated = gdf_aggregated.merge(
         attributes[['BUILDINGSTRUCTUREID'] + additional], on='BUILDINGSTRUCTUREID',

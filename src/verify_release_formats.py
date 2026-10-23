@@ -35,7 +35,7 @@ def main():
                     equal_nan=True,rtol=1e-9,atol=1e-8)
                 equal &= ~(right.notna() & numeric.isna()).to_numpy()
             else:
-                equal = left.fillna('').astype(str).eq(right.fillna('').astype(str)).to_numpy()
+                equal = left.astype('string').fillna('').eq(right.astype('string').fillna('')).to_numpy()
             if not equal.all():
                 differences[extension+':'+column] = int((~equal).sum())
         if extension == 'geojson':

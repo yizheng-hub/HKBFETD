@@ -5,7 +5,10 @@ No API key is needed for the public ArcGIS attribute layer.
 """
 import argparse
 from datetime import datetime, timezone
+import gzip
+import hashlib
 import json
+import re
 from pathlib import Path
 import time
 
@@ -17,6 +20,52 @@ SERVICE = 'https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_163
 FIELDS = ['OBJECTID','BuildingCSUID','BuildingID','GeoRefNo','BuildingBlockType','Status',
     'BuildingNameEN','BuildingNameTC','BaseHeight','TopHeight','Storeys','StoreysInBasement',
     'DateCreate','DateStamp','Shape_Area','Shape_Length']
+BULK_URL = 'https://portal.csdi.gov.hk/csdi-webpage/file-api?dataset_id=landsd_rcd_1637211194312_35158&format=geojson&layer_name=Building'
+CATALOG_URL = 'https://portal.csdi.gov.hk/csdi-webpage/getDatasetInfo?datasetId=landsd_rcd_1637211194312_35158'
+
+
+def fetch_bulk(output):
+    """Acquire the advertised public GeoJSON download, preserving record dates."""
+    import geopandas as gpd
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cached = output.with_suffix('.geojson.gz')
+    digest = hashlib.sha256()
+    with httpx.Client(timeout=httpx.Timeout(240, connect=30), follow_redirects=True) as client:
+        response = client.get(CATALOG_URL)
+        response.raise_for_status()
+        catalog = response.json()['datasetInfo']
+        expected = next(layer['recordCount'] for layer in catalog['sdsJsonList'] if layer['layerName']=='Building')
+        with client.stream('GET', BULK_URL) as response:
+            response.raise_for_status()
+            pending = cached.with_suffix('.pending')
+            with gzip.open(pending, 'wb', compresslevel=3) as stream:
+                for chunk in response.iter_bytes():
+                    digest.update(chunk)
+                    stream.write(chunk)
+            pending.replace(cached)
+    with gzip.open(cached, 'rt', encoding='utf-8') as stream:
+        data = json.load(stream)
+    # GeoJSON uses WGS84 longitude/latitude; reject a different coordinate range.
+    frame = gpd.GeoDataFrame.from_features(data['features'], crs=4326)
+    if len(frame) != expected:
+        raise ValueError('Official bulk record count differs from the catalog; snapshot rejected')
+    if frame.BuildingCSUID.isna().any() or frame.BuildingCSUID.duplicated().any():
+        raise ValueError('Official source does not have unique component IDs')
+    bounds = frame.total_bounds
+    if not (113 < bounds[0] < bounds[2] < 115 and 21 < bounds[1] < bounds[3] < 24):
+        raise ValueError('Unexpected official GeoJSON coordinate range')
+    frame.to_parquet(output, index=False)
+    metadata = {'primary_provider':'Hong Kong Lands Department / CSDI Building',
+        'primary_service':SERVICE, 'frozen_download':BULK_URL,
+        'source_version_tokens':sorted(set(re.findall(r'_v(\d{8})_',json.dumps(catalog)))),
+        'retrieved_utc':datetime.now(timezone.utc).isoformat(),
+        'raw_geojson_sha256':digest.hexdigest(), 'sha256':file_hash(output),
+        'bytes':output.stat().st_size, 'records':len(frame), 'building_csuid_unique':True,
+        'height_definition':'Raw TopHeight minus BaseHeight of the matched structural component',
+        'source_observation_dates':'DateCreate/DateStamp retained as record dates, not survey or construction dates',
+        'integration_match_policy':'Exact unique BuildingCSUID, compatible type, valid source geometry and footprint IoU >=0.95'}
+    output.with_suffix('.metadata.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2),encoding='utf-8')
+    print('[INFO] Official CSDI bulk snapshot complete: '+str(len(frame))+' records',flush=True)
 
 
 def fetch(output):
@@ -79,5 +128,6 @@ def fetch(output):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--bulk',action='store_true',help='Use the advertised public GeoJSON bulk download; save GeoParquet')
     args=parser.parse_args()
-    fetch(args.output)
+    (fetch_bulk if args.bulk else fetch)(args.output)

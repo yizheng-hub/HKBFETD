@@ -85,7 +85,7 @@ original placeholders. Planning zones describe intent, not observed building use
 `Height_m` is **structural component height**, calculated as top minus base
 elevation. Towers and podiums remain separate structures. It is not architectural
 spire height. CSDI Building source elevations are supplemented from a frozen
-public GeoParquet distribution, matched by unique `BuildingCSUID`, compatible
+official bulk download, matched by unique `BuildingCSUID`, compatible
 structure type and valid footprint IoU >=0.95. Local geometry is retained and
 the distributor's derived `height_m` is ignored. The original footprint table's
 `T` includes open-sided/temporary structures; CSDI's finer type is retained.
@@ -99,23 +99,46 @@ different-reference discrepancies are flagged. Missing heights are not filled
 with 15 m. Original dimensions remain unchanged in raw fields.
 
 The source provider is [LandsD CSDI Building](https://portal.csdi.gov.hk/csdi-webpage/metadata/landsd_rcd_1637211194312_35158/html).
-The frozen distribution comes from [hk-buildings](https://github.com/AlreadyOpen/hk-buildings)
-via the pinned Hugging Face URL in `csdi_framework_mirror_20261023.metadata.json`.
-Its per-building survey dates were not retained by the distributor; acquisition
-date is not treated as a measurement date. Four reader-case elevations were
-checked against the official API; this is not independent whole-stock validation.
+The active snapshot is the official 2026-10-20 bulk release, with 342,233
+components. Download URL and raw/GeoParquet SHA256 are recorded in
+`csdi_official_20261020.metadata.json`. `DateCreate` and `DateStamp` are retained
+as record dates, not construction or survey dates. The earlier distributor
+snapshot is preserved locally in the previous release's input archive.
+The explicit acquisition command is `python src/fetch_csdi_buildings.py --bulk
+--output data/sources/csdi_official_20261020.parquet`; replay uses the frozen
+input bundle and does not contact the provider. Source reports do not constitute
+independent whole-stock validation.
 The 2025-02-06 building inventory is retained for an exact v1.1 comparison;
 new/different-source IDs do not silently expand the stock to the current date.
 
 Reported storeys and the optional `height / 3 m` proxy are separate fields.
 The proxy rounds to the nearest integer, with half ties upward after normalizing
 the ratio to nine decimal places. It does not enter reported storeys or GFA. GFA is a scoped registered
-value or an explicitly marked footprint-times-reported-storeys approximation.
+value, documented component GFA, or an explicitly marked footprint-times-reported-storeys approximation.
 Shared permits are not allocated in full to each constituent building.
-Source storey differences over max(1 storey, 10%) remain unresolved. A component
+Source storey differences over max(1 storey, 10%) remain unresolved unless an
+explicit same-component physical-storey document reconciles them. The reviewed
+facts in `ctl/building_attribute_evidence.csv` preserve source URLs, dates,
+attribute-specific units/scopes and adoption decisions. Central Plaza's 75,
+Langham Place Office Tower's 59 and Prosperity Millennia Plaza's 32 are scoped
+tower counts; competing marketing labels and whole-development claims remain
+separate. Mechanical/refuge levels are included where the document says so;
+reported storeys do not imply occupied office-floor counts. A component
 height/storey ratio outside 1–20 m also withholds the fused storeys and related
 proxy GFA because their scopes may differ; reported raw counts remain available.
 These are conservative review rules, not measured error bounds.
+Owner-documented component GFA is retained separately from registration. The
+best-available area prefers registration, then documented component GFA, then
+the uniform-floorplate proxy. Rentable, saleable and unit internal areas are not
+relabelled GFA. Documented approximate areas retain that qualification in their
+source facts; exact unit conversion does not imply extra measurement precision.
+
+`aggregate_cached_housing.py SNAPSHOT_DIRECTORY BUILDING_PARQUET` replays the
+supplementary Housing Authority evidence from checksummed normalized snapshots
+in `attribute_source_evidence.zip`. It works offline and does not change primary
+classification, heights, storeys or GFA. Its block-name matches remain candidates;
+estate coordinates do not establish a component match. District-level download
+failures remain incomplete, rather than being interpreted as empty stock.
 OSM whole-building storeys may include a podium. They donate to component
 storeys only when the component base is within 3 m of sampled terrain; other
 OSM reports remain separate and do not invalidate official component counts.

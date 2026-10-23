@@ -213,6 +213,9 @@ def attach_csdi_dimensions(frame, source):
         "BuildingBlockType":"CSDI_Structure_Type", "Status":"CSDI_Status"}
     for original, name in columns.items():
         frame[name] = source[original].to_numpy()
+    for original, name in {"BuildingID":"CSDI_Native_Building_ID", "DateCreate":"CSDI_Record_Created_Date",
+                           "DateStamp":"CSDI_Record_Updated_Date"}.items():
+        frame[name] = source[original].to_numpy() if original in source else np.nan
     frame["CSDI_Geometry_IoU"] = iou
     frame["CSDI_Match_Quality"] = np.select(
         [~matched, ~valid, ~same_type, ~(iou >= .95)],
@@ -309,8 +312,73 @@ def assign_floor_area(frame):
     area = registered.combine_first(permit_total)
     frame["Registered_GFA_sqm"] = area
     frame["Registered_GFA_Source"] = np.where(registered.notna(), "LandsD_structure_GFA", np.where(permit_total.notna(), "single_structure_single_permit", "missing"))
+    documented = numbers(frame, 'Documented_GFA_sqm').where(lambda s: s > 0)
     frame["GFA_Proxy_sqm"] = numbers(frame, "SHAPE_Area") * numbers(frame, "Estimated_Floors")
     frame["GFA_Proxy_Method"] = np.where(frame.GFA_Proxy_sqm.notna(), "footprint_times_reported_storeys_uniform_floorplate", "unknown")
-    frame["GFA_Best_Available_sqm"] = area.combine_first(frame.GFA_Proxy_sqm)
-    frame["GFA_Quality"] = np.where(area.notna(), "registered_scope_checked", np.where(frame.GFA_Proxy_sqm.notna(), "uniform_floorplate_proxy", "unknown"))
+    frame["GFA_Best_Available_sqm"] = area.combine_first(documented).combine_first(frame.GFA_Proxy_sqm)
+    frame["GFA_Quality"] = np.select([area.notna(),documented.notna(),frame.GFA_Proxy_sqm.notna()],
+        ["registered_scope_checked","documented_component_gfa","uniform_floorplate_proxy"],default="unknown")
     return frame
+
+
+def apply_documented_attributes(frame, evidence):
+    """Keep source-scoped facts; only explicit same-component counts donate floors."""
+    frame, evidence = frame.copy(), evidence.copy()
+    require_unique(evidence, 'evidence_id')
+    evidence['building_id'] = ids(evidence['building_id'])
+    lookup = frame.set_index(ID)['BUILDINGCSUID']
+    if not evidence['building_id'].isin(lookup.index).all():
+        raise ValueError('Documented attribute has an unknown local building ID')
+    if not evidence.csuid.eq(evidence.building_id.map(lookup)).all():
+        raise ValueError('Documented attribute local ID/BuildingCSUID mismatch')
+    if not evidence.source_url.str.startswith(('https://', 'http://')).all():
+        raise ValueError('Documented attributes require source URLs')
+    frame['Reported_Attribute_Evidence'] = '[]'
+    frame['Floors_Document_Evidence_IDs'] = '[]'
+    frame['Floors_Before_Document_Review'] = numbers(frame, 'Estimated_Floors')
+    frame['Floors_Source_Before_Document_Review'] = frame.Floors_Source
+    frame['Documented_GFA_sqm'] = np.nan
+    frame['Documented_GFA_Evidence_IDs'] = '[]'
+    by_id = {bid: index for index, bid in frame[ID].items()}
+    for bid, group in evidence.groupby('building_id', sort=True):
+        index = by_id[bid]
+        frame.at[index, 'Reported_Attribute_Evidence'] = json.dumps(
+            group.fillna('').to_dict('records'), ensure_ascii=False, separators=(',', ':'))
+        areas = group[group.adoption.eq('component_gfa_supported')]
+        if not areas.empty:
+            if not (areas.attribute.eq('gross_floor_area') & areas.unit.eq('m2') &
+                    areas.scope.eq('tower_component_gfa')).all():
+                raise ValueError('Documented GFA requires same-component gross-floor-area scope')
+            values = pd.to_numeric(areas.value, errors='coerce')
+            if not (np.isfinite(values) & values.gt(0)).all() or len(values.unique()) != 1:
+                raise ValueError('Invalid/conflicting documented component GFA')
+            row = frame.loc[index]
+            if row.get('CSDI_Match_Quality') != 'same_component_id_type_footprint' or row.get('CSDI_Structure_Type') != 'Tower':
+                raise ValueError('Documented GFA lacks a matched tower component')
+            frame.at[index, 'Documented_GFA_sqm'] = values.iloc[0]
+            frame.at[index, 'Documented_GFA_Evidence_IDs'] = json.dumps(areas.evidence_id.tolist())
+        counts = group[group.adoption.eq('component_storeys_supported')]
+        if counts.empty:
+            continue
+        if not (counts.attribute.eq('aboveground_storeys') & counts.unit.eq('storeys') &
+                counts.scope.eq('tower_component_aboveground')).all():
+            raise ValueError('Component storeys require explicit aboveground physical-count scope')
+        values = pd.to_numeric(counts.value, errors='coerce').map(parse_storeys)
+        if values.isna().any():
+            raise ValueError('Invalid documented component storey count')
+        row = frame.loc[index]
+        if row.get('CSDI_Match_Quality') != 'same_component_id_type_footprint' or row.get('CSDI_Structure_Type') != 'Tower':
+            raise ValueError('Documented tower count lacks a matched tower component')
+        if len(values.unique()) != 1:
+            raise ValueError('Conflicting documented component counts require source reconciliation')
+        value = values.iloc[0]
+        height = row.Estimated_Height
+        if pd.notna(height) and not 1 <= height / value <= 20:
+            raise ValueError('Documented storeys contradict the component height')
+        frame.at[index, 'Estimated_Floors'] = value
+        frame.at[index, 'Floors_Source'] = 'Documented_component_storeys'
+        frame.at[index, 'Floors_Quality'] = 'documented_component_count_legacy_conflict_resolved'
+        frame.at[index, 'Floors_Document_Evidence_IDs'] = json.dumps(counts.evidence_id.tolist())
+        frame.at[index, 'Floors_Height_Proxy'] = np.nan
+        frame.at[index, 'Floor_Height_Proxy_Assumption_m'] = np.nan
+    return assign_floor_area(frame)

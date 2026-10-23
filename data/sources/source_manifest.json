@@ -33,53 +33,27 @@
       }
     },
     {
-      "path": "data/sources/csdi_framework_mirror_20261023.parquet",
-      "bytes": 41336255,
-      "sha256": "f3246dcf5e94aab3c643991d597616894d3ca56035eb86968df379b6f61dd9c5",
-      "kind": "frozen_CSDI_building_public_distribution",
+      "path": "data/sources/csdi_official_20261020.parquet",
+      "bytes": 74289177,
+      "sha256": "79f1054d0a62b632ecf0256d49644095f3c8e0e388864fd92efc3da90c78c51b",
+      "kind": "frozen_official_CSDI_building_bulk_download",
       "details": {
         "primary_provider": "Hong Kong Lands Department / CSDI Building",
         "primary_service": "https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637211194312_35158/MapServer/0",
-        "distributor": "AlreadyOpen/hk-buildings",
-        "distribution_repository": "https://github.com/AlreadyOpen/hk-buildings",
-        "frozen_download": "https://huggingface.co/datasets/alreadyopen/hk-buildings/resolve/77418616b40980f05f1c4bc884aca79068b3b72e/buildings.parquet",
-        "revision": "77418616b40980f05f1c4bc884aca79068b3b72e",
-        "retrieved_utc": "2026-10-22T16:40:07.321320+00:00",
-        "sha256": "f3246dcf5e94aab3c643991d597616894d3ca56035eb86968df379b6f61dd9c5",
-        "bytes": 41336255,
-        "height_definition": "Original BaseHeight and TopHeight elevations retained; publisher height_m ignored and recomputed during validation",
-        "verification": "Whole frozen file SHA256 matches distributor LFS object. Full ID/geometry/elevation comparisons performed; four example elevations checked independently against the official API. These are not independent height measurements.",
-        "records": 342195,
+        "frozen_download": "https://portal.csdi.gov.hk/csdi-webpage/file-api?dataset_id=landsd_rcd_1637211194312_35158&format=geojson&layer_name=Building",
+        "source_snapshot_date": "2026-10-20",
+        "retrieved_utc": "2026-10-23T00:57:05.303843+00:00",
+        "raw_geojson_sha256": "e1c3b29b6ff85fd807d3d533f6f505f69f27e9db56372818395f12e115d023f3",
+        "raw_geojson_bytes": 397162958,
+        "sha256": "79f1054d0a62b632ecf0256d49644095f3c8e0e388864fd92efc3da90c78c51b",
+        "bytes": 74289177,
+        "records": 342233,
         "building_csuid_unique": true,
-        "source_observation_dates": "not retained by distributor; retrieval date is not a survey date",
+        "height_definition": "Raw TopHeight minus BaseHeight of the matched structural component",
+        "source_observation_dates": "DateCreate/DateStamp retained as record dates, not survey or construction dates",
         "primary_height_policy": "structural component TopHeight minus BaseHeight; ground-to-top retained separately",
-        "integration_match_policy": "Exact unique BuildingCSUID, compatible non-podium/podium type, valid source geometry and footprint IoU >=0.95; retain local footprints",
-        "official_api_case_checks": [
-          {
-            "local_building_id": "170369",
-            "base_mPD": 3.9,
-            "top_mPD": 380.7,
-            "storeys": null
-          },
-          {
-            "local_building_id": "181189",
-            "base_mPD": 7.0,
-            "top_mPD": 310.3,
-            "storeys": 65
-          },
-          {
-            "local_building_id": "192326",
-            "base_mPD": 29.4,
-            "top_mPD": 490.0,
-            "storeys": 103
-          },
-          {
-            "local_building_id": "87318",
-            "base_mPD": 951.2,
-            "top_mPD": 957.4,
-            "storeys": null
-          }
-        ]
+        "integration_match_policy": "Exact unique BuildingCSUID, compatible type, valid source geometry and footprint IoU >=0.95; local footprints retained",
+        "verification": "Bulk record count equals the official catalog; raw response SHA256 frozen; unique component IDs and WGS84 geometry range checked. Source reports are not independent measurements."
       }
     },
     {

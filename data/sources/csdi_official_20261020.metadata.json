@@ -1,0 +1,18 @@
+{
+  "primary_provider": "Hong Kong Lands Department / CSDI Building",
+  "primary_service": "https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637211194312_35158/MapServer/0",
+  "frozen_download": "https://portal.csdi.gov.hk/csdi-webpage/file-api?dataset_id=landsd_rcd_1637211194312_35158&format=geojson&layer_name=Building",
+  "source_snapshot_date": "2026-10-20",
+  "retrieved_utc": "2026-10-23T00:57:05.303843+00:00",
+  "raw_geojson_sha256": "e1c3b29b6ff85fd807d3d533f6f505f69f27e9db56372818395f12e115d023f3",
+  "raw_geojson_bytes": 397162958,
+  "sha256": "79f1054d0a62b632ecf0256d49644095f3c8e0e388864fd92efc3da90c78c51b",
+  "bytes": 74289177,
+  "records": 342233,
+  "building_csuid_unique": true,
+  "height_definition": "Raw TopHeight minus BaseHeight of the matched structural component",
+  "source_observation_dates": "DateCreate/DateStamp retained as record dates, not survey or construction dates",
+  "primary_height_policy": "structural component TopHeight minus BaseHeight; ground-to-top retained separately",
+  "integration_match_policy": "Exact unique BuildingCSUID, compatible type, valid source geometry and footprint IoU >=0.95; local footprints retained",
+  "verification": "Bulk record count equals the official catalog; raw response SHA256 frozen; unique component IDs and WGS84 geometry range checked. Source reports are not independent measurements."
+}

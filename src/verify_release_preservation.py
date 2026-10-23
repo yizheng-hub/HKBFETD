@@ -8,6 +8,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 from ai_cache import file_hash
+from config import CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH
 
 out = ROOT/'output/v2'
 baseline = ROOT/'output/v2_terrain_baseline_20261023'
@@ -29,8 +30,17 @@ comparison['New_Physical_Review_Flags'] = new.Physical_Review_Flags
 comparison.to_csv(out/'terrain_baseline_to_component_revision.csv',encoding='utf-8-sig')
 
 protected = json.loads((baseline/'legacy_preservation_validation.json').read_text(encoding='utf-8'))
+archive_manifest = ROOT/'output'/'history_archive_manifest.json'
+archive = json.loads(archive_manifest.read_text(encoding='utf-8-sig')) if archive_manifest.exists() else None
+archived = {r['original_path']:r for r in archive['files']} if archive else {}
 for record in protected['checks']:
-    record['sha256'] = file_hash(ROOT/record['path'])
+    source = ROOT/record['path']
+    record['preserved_in_history_archive'] = False
+    if not source.is_file() and record['path'] in archived:
+        source = Path(archived[record['path']]['archived_path'])
+        assert source.resolve().is_relative_to(Path(archive['archive_root']).resolve()), 'Archive path escapes its declared root'
+        record['preserved_in_history_archive'] = True
+    record['sha256'] = file_hash(source)
     record['unchanged'] = record['sha256'] == record['baseline_sha256']
 protected['unchanged'] = sum(r['unchanged'] for r in protected['checks'])
 protected['changed'] = [r['path'] for r in protected['checks'] if not r['unchanged']]
@@ -41,7 +51,7 @@ for record in json.loads((baseline/'BASELINE_INDEX.json').read_text(encoding='ut
 
 with zipfile.ZipFile(out/'reproduction_inputs.zip') as archive:
     input_names = archive.namelist()
-    for name in ['data/sources/csdi_framework_mirror_20261023.parquet','data/sources/csdi_framework_mirror_20261023.metadata.json']:
+    for name in [Path(CSDI_BUILDINGS_PATH).relative_to(ROOT).as_posix(), Path(CSDI_METADATA_PATH).relative_to(ROOT).as_posix()]:
         assert name in input_names
 with zipfile.ZipFile(out/'v2_source_snapshot.zip') as archive:
     for path in list((ROOT/'src').glob('*.py')) + list((ROOT/'tests').glob('*.py')):
