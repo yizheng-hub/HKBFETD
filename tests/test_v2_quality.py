@@ -12,7 +12,7 @@ from shapely.geometry import box, Point
 
 SRC = Path(__file__).resolve().parents[1] / 'src'
 sys.path.insert(0,str(SRC))
-from data_quality import ID, repair_footprints, permit_attributes, deduplicate_osm, parse_height, parse_storeys, fuse_dimensions, match_bdbiar_points
+from data_quality import ID, repair_footprints, permit_attributes, deduplicate_osm, parse_height, parse_storeys, fuse_dimensions, match_bdbiar_points, apply_documented_attributes
 from classification import (UNKNOWN,MIXED,RESIDENTIAL,COMMERCIAL,NONASSESSED,INDUSTRIAL,
                             sub_label,parse_weights,format_weights,finalize_function_fields,building_tag_function,enrich_function_evidence)
 from ai_cache import fingerprint,vision_checkpoint_matches,save_cache,read_cache
@@ -178,13 +178,79 @@ class PhysicalValuesTests(unittest.TestCase):
 
 
 class CSDIComponentTests(unittest.TestCase):
+    def test_low_height_storeys_scope_withholds_height_and_keeps_source_candidate(self):
+        raw=component(floors=17)
+        p=raw.to_crs(4326).geometry.representative_point().iloc[0]
+        terrain=pd.DataFrame({ID:['1'],'longitude':[p.x],'latitude':[p.y],'dtm_elevation_mpd':[5.]})
+        frame=fuse_dimensions(raw,matches(),terrain,csdi_building(top=24.,base=19.9,storeys=17))
+        evidence=pd.DataFrame(columns=pd.read_csv(SRC.parent/'ctl/building_attribute_evidence.csv',nrows=0).columns)
+        row=apply_documented_attributes(frame,evidence).iloc[0]
+        self.assertTrue(pd.isna(row.Estimated_Height))
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+        self.assertAlmostEqual(row.Height_Before_Document_Review,4.1)
+        self.assertEqual(row.CSDI_Top_Elevation_mPD,24.)
+        self.assertEqual(row.CSDI_Base_Elevation_mPD,19.9)
+        self.assertEqual(row.CSDI_Reported_Storeys,17.)
+        self.assertEqual(row.NUMABOVEGROUNDSTOREYS,17.)
+        self.assertEqual(row.Height_Quality,'conflict_unresolved')
+        self.assertEqual(row.Height_Reference,'unresolved_component_scope')
+        self.assertIn('height_storeys_component_scope_unresolved',row.Height_Source_Comparison_QA)
+        self.assertEqual(row.Ground_To_Top_Height_m,19.)
+        self.assertEqual(row.Ground_Height_Quality,'component_scope_unresolved_estimate')
+
+    def test_bridge_pylon_height_is_not_rejected_due_to_one_reported_storey(self):
+        row=fuse_dimensions(component(),matches(),csdi=csdi_building(top=200.,base=0.,storeys=1)).iloc[0]
+        self.assertEqual(row.Estimated_Height,200.)
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertEqual(row.Height_Source,'CSDI_top_minus_component_base')
+
+    def test_compatible_height_and_storeys_remain_available(self):
+        row=fuse_dimensions(component(floors=16),matches(),csdi=csdi_building(top=60.,base=0.,storeys=16)).iloc[0]
+        self.assertEqual(row.Estimated_Height,60.)
+        self.assertEqual(row.Estimated_Floors,16.)
+
+    def test_subtraction_noise_does_not_withhold_one_metre_per_reported_storey_height(self):
+        row=fuse_dimensions(component(),matches(),csdi=csdi_building(top=31.,base=21.+1e-12,storeys=10)).iloc[0]
+        self.assertAlmostEqual(row.Estimated_Height,10.)
+
     def test_original_elevations_used_instead_of_distributor_height(self):
         row=fuse_dimensions(component(),matches(),csdi=csdi_building(top=30,base=0,storeys=10)).iloc[0]
         self.assertEqual(row.Estimated_Height,30.)
         self.assertEqual(row.Height_Source,'CSDI_top_minus_component_base')
         self.assertEqual(row.Height_Reference,'structure_base_to_top')
-        self.assertEqual(row.Estimated_Floors,10.)
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertEqual(row.CSDI_Reported_Storeys,10.)
+        self.assertEqual(row.Floors_Source,'CSDI_storeys_vertical_scope_unverified')
+        self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+        self.assertTrue(pd.isna(row.Floors_Height_Proxy))
         self.assertTrue(pd.isna(row.BASEHEIGHT))
+
+    def test_csdi_total_and_basement_do_not_imply_an_aboveground_count(self):
+        source=csdi_building(top=40,base=0,storeys=12)
+        source['StoreysInBasement']=2
+        row=fuse_dimensions(component(),matches(),csdi=source).iloc[0]
+        self.assertEqual(row.CSDI_Reported_Storeys,12.)
+        self.assertEqual(row.CSDI_Basement_Storeys,2.)
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertEqual(row.Floors_Quality,'reported_vertical_scope_unverified')
+
+    def test_primary_aboveground_count_also_controls_height_scope_check(self):
+        row=fuse_dimensions(component(floors=10),matches(),csdi=csdi_building(top=9,base=0,storeys=9)).iloc[0]
+        self.assertTrue(pd.isna(row.Estimated_Height))
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertEqual(row.Floors_Source,'component_storeys_scope_unresolved')
+
+    def test_component_source_names_remain_distinct_from_parent_names(self):
+        source=csdi_building()
+        source['BuildingNameEN']="Oi Shun House 'A' Substation"
+        source['BuildingNameTC']='愛信樓Ａ變電站'
+        raw=component(); raw['BUILDINGNAMEEN']='OI SHUN HSE'
+        row=fuse_dimensions(raw,matches(),csdi=source).iloc[0]
+        self.assertEqual(row.CSDI_Building_Name_EN,"Oi Shun House 'A' Substation")
+        self.assertEqual(row.CSDI_Building_Name_TC,'愛信樓Ａ變電站')
+        self.assertEqual(row.BUILDINGNAMEEN,'OI SHUN HSE')
+        self.assertEqual(row.CSDI_Component_Use_Type,'substation')
 
     def test_raised_tower_base_is_distinct_from_ground(self):
         raw=component(top=479.73,floors=103)
@@ -426,28 +492,47 @@ class ClassificationAndResumeTests(unittest.TestCase):
         result=finalize_function_fields(finalize_function_fields(f)).iloc[0]
         self.assertIn('subclass_parent_conflict',result.Classification_QA)
 
-    def test_permit_nonresidential_share_is_not_assumed_commercial(self):
+    def test_permit_subclasses_are_not_measured_current_use_shares(self):
         f=pd.DataFrame({'Final_Main_Class':[RESIDENTIAL],'Final_Sub_Class':['Private Housing_私人房屋'],
             'GFA_DOMESTIC_SUM':[80.],'GFA_NONDOMESTIC_SUM':[20.]})
         result=finalize_function_fields(f).iloc[0]
-        self.assertEqual(result.Final_Main_Class,MIXED)
-        self.assertAlmostEqual(result.Observed_Nondomestic_Area_Share,.2)
+        self.assertEqual(result.Final_Main_Class,RESIDENTIAL)
+        self.assertEqual(result.GFA_DOMESTIC_SUM,80.)
+        self.assertEqual(result.GFA_NONDOMESTIC_SUM,20.)
+        self.assertTrue(pd.isna(result.Observed_Residential_Area_Share))
+        self.assertTrue(pd.isna(result.Observed_Nondomestic_Area_Share))
         self.assertEqual(result.Observed_Main_Area_Proportions,'')
-        self.assertEqual(result.Sub_Class_Proportions,'')
-        self.assertIn('registered_nonresidential_function_unspecified',result.Classification_QA)
+        self.assertEqual(result.Sub_Class_Proportions,'Private Housing_私人房屋:1.00000000')
+        self.assertEqual(result.Proportion_Method,'single_function_assumption')
+        self.assertEqual(result.Proportion_Quality,'assumed_not_measured')
+        self.assertIn('permit_accounting_not_observed_use',result.Classification_QA)
+        self.assertIn('permit_physical_scope_unverified',result.Classification_QA)
+        self.assertNotIn('registered_nonresidential_function_unspecified',result.Classification_QA)
+        self.assertNotIn('registered_area_function_conflict',result.Classification_QA)
 
-    def test_resolved_nonresidential_evidence_clears_only_obsolete_qa(self):
+    def test_permit_accounting_does_not_clear_independent_function_conflict(self):
         f=pd.DataFrame({'Final_Main_Class':[MIXED],'Final_Sub_Class':[UNKNOWN],
             'GFA_DOMESTIC_SUM':[80.],'GFA_NONDOMESTIC_SUM':[20.],
             'Evidence_Subclass_Weights':[''],'Classification_QA':['function_evidence_conflict']})
         first=finalize_function_fields(f)
-        self.assertIn('registered_nonresidential_function_unspecified',first.Classification_QA.iloc[0])
+        self.assertEqual(first.Final_Main_Class.iloc[0],MIXED)
+        self.assertEqual(first.GFA_DOMESTIC_SUM.iloc[0],80.)
+        self.assertEqual(first.GFA_NONDOMESTIC_SUM.iloc[0],20.)
+        self.assertTrue(pd.isna(first.Observed_Residential_Area_Share.iloc[0]))
+        self.assertTrue(pd.isna(first.Observed_Nondomestic_Area_Share.iloc[0]))
+        self.assertIn('function_evidence_conflict',first.Classification_QA.iloc[0])
+        self.assertIn('permit_accounting_not_observed_use',first.Classification_QA.iloc[0])
+        self.assertNotIn('registered_nonresidential_function_unspecified',first.Classification_QA.iloc[0])
         first['Evidence_Subclass_Weights']='Office_办公室:1'
         row=finalize_function_fields(first).iloc[0]
         self.assertEqual(row.Final_Main_Class,MIXED)
         self.assertNotIn('registered_nonresidential_function_unspecified',row.Classification_QA)
         self.assertIn('function_evidence_conflict',row.Classification_QA)
-        self.assertEqual(parse_weights(row.Observed_Main_Area_Proportions),{RESIDENTIAL:.8,COMMERCIAL:.2})
+        self.assertEqual(row.GFA_DOMESTIC_SUM,80.)
+        self.assertEqual(row.GFA_NONDOMESTIC_SUM,20.)
+        self.assertTrue(pd.isna(row.Observed_Residential_Area_Share))
+        self.assertTrue(pd.isna(row.Observed_Nondomestic_Area_Share))
+        self.assertEqual(parse_weights(row.Observed_Main_Area_Proportions),{})
 
     def test_successful_visual_checkpoint_survives_image_loss(self):
         context='context'
@@ -471,6 +556,20 @@ class ClassificationAndResumeTests(unittest.TestCase):
         row=stage.apply_correction_suggestions(base,decisions).set_index(ID).loc['1']
         self.assertEqual(row.Final_Main_Class,UNKNOWN)
         self.assertEqual(row.Geometry_Review_Status,'host_function_conflict_no_inheritance')
+
+    def test_visual_merge_cannot_replace_substation_use_with_parent_housing(self):
+        stage=load_stage(7)
+        base=pd.DataFrame({ID:['1','2'],'Final_Main_Class':[COMMERCIAL,RESIDENTIAL],
+            'Final_Sub_Class':['Other Commercial_其他商业','Private Housing_私人房屋'],
+            'Classification_Source':['CSDI_Component_Name_Keyword','source'],
+            'CSDI_Component_Use_Type':['substation','']})
+        for col in ['NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT','Estimated_Height','Estimated_Floors']:
+            base[col]=np.nan
+        decisions=pd.DataFrame({'fragment_id':['1'],'host_id':['2'],'ai_decision':['merge'],'Cache_Status':['matching_checkpoint']})
+        row=stage.apply_correction_suggestions(base,decisions).set_index(ID).loc['1']
+        self.assertEqual(row.Final_Main_Class,COMMERCIAL)
+        self.assertEqual(row.Final_Sub_Class,'Other Commercial_其他商业')
+        self.assertEqual(row.Geometry_Review_Status,'component_use_scope_conflict_no_inheritance')
 
     def test_atomic_checkpoint_and_empty_cache(self):
         with tempfile.TemporaryDirectory() as temp:

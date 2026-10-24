@@ -20,7 +20,11 @@ def apply_correction_suggestions(base, suggestions):
                 host = str(merges.host_id.iloc[0])
                 host_qa = result.loc[host,'Classification_QA'] if host in result.index and 'Classification_QA' in result else ''
                 host_conflict = pd.notna(host_qa) and any(flag in str(host_qa) for flag in ['function_evidence_conflict','registered_area_function_conflict'])
-                if host_conflict:
+                fragment_use = result.loc[str(fragment),'CSDI_Component_Use_Type'] if 'CSDI_Component_Use_Type' in result else ''
+                host_use = result.loc[host,'CSDI_Component_Use_Type'] if host in result.index and 'CSDI_Component_Use_Type' in result else ''
+                if fragment_use == 'substation' and host_use != 'substation':
+                    result.loc[str(fragment),'Geometry_Review_Status'] = 'component_use_scope_conflict_no_inheritance'
+                elif host_conflict:
                     result.loc[str(fragment),'Geometry_Review_Status'] = 'host_function_conflict_no_inheritance'
                 elif host in result.index and result.loc[host, 'Final_Main_Class'] not in [UNKNOWN,NONASSESSED]:
                     for col in ['Final_Main_Class','Final_Sub_Class','Evidence_Subclass_Weights']:

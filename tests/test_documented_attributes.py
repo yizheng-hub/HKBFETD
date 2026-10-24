@@ -30,6 +30,63 @@ def facts(**changes):
 
 
 class DocumentedAttributesTests(unittest.TestCase):
+    def test_storey_reference_conflict_withholds_count_and_proxy_but_retains_raw_evidence(self):
+        frame=component()
+        frame['Estimated_Floors']=25.
+        frame['CSDI_Reported_Storeys']=25.
+        frame['Floors_Source']='CSDI_reported_storeys'
+        frame['Floors_Height_Proxy']=43.
+        frame['Floor_Height_Proxy_Assumption_m']=3.
+        row=apply_documented_attributes(frame,facts(value='35',scope='tower count reference unresolved',
+            adoption='unresolved_component_storey_reference_conflict')).iloc[0]
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+        self.assertTrue(pd.isna(row.GFA_Best_Available_sqm))
+        self.assertTrue(pd.isna(row.Floors_Height_Proxy))
+        self.assertEqual(row.CSDI_Reported_Storeys,25.)
+        self.assertEqual(row.Floors_Before_Document_Review,25.)
+        self.assertEqual(row.Floors_Source,'documented_storey_reference_conflict_withheld')
+        self.assertEqual(row.Floors_Quality,'conflict_unresolved')
+        self.assertIn('documented_storey_reference_conflict',row.Floors_Source_Comparison_QA)
+        self.assertEqual(json.loads(row.Reported_Attribute_Evidence)[0]['value'],'35')
+
+    def test_unresolved_count_cannot_silently_override_selected_document_count(self):
+        rows=pd.concat([facts(),facts(evidence_id='other-reference',value='35',
+            adoption='unresolved_component_storey_reference_conflict')],ignore_index=True)
+        with self.assertRaisesRegex(ValueError,'source reconciliation'):
+            apply_documented_attributes(component(),rows)
+
+    def test_withholding_count_preserves_independent_registered_area(self):
+        frame=component()
+        frame['Estimated_Floors']=25.
+        frame['GROSSFLOORAREA']=55000.
+        row=apply_documented_attributes(frame,facts(value='35',
+            adoption='unresolved_component_storey_reference_conflict')).iloc[0]
+        self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+        self.assertEqual(row.GFA_Best_Available_sqm,55000.)
+        self.assertEqual(row.GFA_Quality,'reported_structure_gfa_not_independently_validated')
+
+    def test_unresolved_documented_height_reference_withholds_primary_and_retains_source_value(self):
+        frame=component()
+        frame['Estimated_Floors']=32.
+        frame['Floors_Height_Proxy']=43.
+        frame['Floor_Height_Proxy_Assumption_m']=3.
+        frame['Ground_To_Top_Height_m']=132.6
+        frame['Ground_Height_Quality']='terrain_point_estimate'
+        row=apply_documented_attributes(frame,facts(attribute='height',value='374',unit='m',
+            scope='main building including mast',adoption='unresolved_height_reference_conflict')).iloc[0]
+        self.assertTrue(pd.isna(row.Estimated_Height))
+        self.assertEqual(row.Height_Before_Document_Review,128.4)
+        self.assertEqual(row.Height_Quality,'conflict_unresolved')
+        self.assertIn('documented_height_reference_conflict',row.Height_Source_Comparison_QA)
+        self.assertEqual(row.Height_Reference,'unresolved_documented_reference')
+        self.assertTrue(pd.isna(row.Floors_Height_Proxy))
+        self.assertTrue(pd.isna(row.Floor_Height_Proxy_Assumption_m))
+        self.assertEqual(row.Ground_To_Top_Height_m,132.6)
+        self.assertEqual(row.Ground_Height_Quality,'documented_reference_unresolved_estimate')
+        self.assertEqual(row.Estimated_Floors,32.)
+        self.assertEqual(row.GFA_Proxy_sqm,25600.)
+
     def test_explicit_count_resolves_legacy_conflict_and_recomputes_area(self):
         row=apply_documented_attributes(component(),facts()).iloc[0]
         self.assertEqual(row.Estimated_Floors,32)
@@ -104,14 +161,18 @@ class DocumentedAttributesTests(unittest.TestCase):
                 apply_documented_attributes(component(),facts(attribute=attribute,value='57000',unit='m2',
                     scope=scope,adoption='component_gfa_supported'))
 
-    def test_registered_gfa_priority_does_not_relabel_a_document_as_registration(self):
+    def test_component_documented_gfa_supersedes_unresolved_raw_registration_scope(self):
         frame=component()
+        frame['Floors_Source']='component_storeys_scope_unresolved'
         frame['GROSSFLOORAREA']=58000.
         row=apply_documented_attributes(frame,facts(attribute='gross_floor_area',value='57000',
             unit='m2',scope='tower_component_gfa',adoption='component_gfa_supported')).iloc[0]
-        self.assertEqual(row.Registered_GFA_sqm,58000)
+        self.assertTrue(pd.isna(row.Registered_GFA_sqm))
+        self.assertEqual(row.Registered_GFA_Source,'LandsD_structure_GFA_component_scope_unresolved')
         self.assertEqual(row.Documented_GFA_sqm,57000)
-        self.assertEqual(row.GFA_Best_Available_sqm,58000)
+        self.assertEqual(row.GFA_Best_Available_sqm,57000)
+        self.assertEqual(row.GFA_Quality,'documented_component_gfa')
+        self.assertEqual(row.GROSSFLOORAREA,58000)
 
     def test_record_dates_are_preserved_without_becoming_completion_years(self):
         frame=component()

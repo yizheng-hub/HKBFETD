@@ -23,6 +23,17 @@ class FixedMain:
 
 
 class ModelBehaviorTests(unittest.TestCase):
+    def test_retained_llm_and_visual_labels_remain_model_inferred(self):
+        sources = ['LLM_native_interactive', 'LLM_matching_checkpoint',
+                   'Inherited_context_matched_VLM', 'CSDI_Component_Name_Keyword']
+        index = pd.Index([str(i) for i in range(len(sources))], name='BUILDINGSTRUCTUREID')
+        base = pd.DataFrame({'BUILDINGSTRUCTUREID':index, 'Final_Main_Class':[COMMERCIAL]*len(sources),
+            'Final_Sub_Class':['Other Commercial_其他商业']*len(sources), 'Classification_Source':sources})
+        result = stage.apply_ml_calibration(base, pd.DataFrame({'area':[50.]*len(sources)}, index=index),
+            {'main':FixedMain([.005,.99,.005]), 'subclasses':{}})
+        self.assertEqual(result.Calibrated_Source.tolist(), sources)
+        self.assertEqual(result.Function_Quality.tolist(), ['model_inferred']*3 + ['source_inferred'])
+
     def test_class_thresholds_require_calibration_precision_and_sample_support(self):
         classes=np.array([RESIDENTIAL,COMMERCIAL,INDUSTRIAL])
         probs=np.repeat([[.85,.1,.05],[.02,.95,.03],[.1,.8,.1],[.005,.005,.99]],
@@ -45,19 +56,25 @@ class ModelBehaviorTests(unittest.TestCase):
         self.assertEqual(result.Calibrated_Main_Class.iloc[0],UNKNOWN)
         self.assertEqual(result.ML_Decision_Status.iloc[0],'low_confidence_unknown')
 
-    def test_new_prediction_cannot_introduce_conflict_with_registered_use_area(self):
+    def test_permit_accounting_does_not_block_new_model_function_or_create_measured_share(self):
         index=pd.Index(['1'],name='BUILDINGSTRUCTUREID')
         base=pd.DataFrame({'BUILDINGSTRUCTUREID':['1'],'Final_Main_Class':[UNKNOWN],
             'Final_Sub_Class':[UNKNOWN],'Classification_Source':['Unknown'],
             'GFA_DOMESTIC_SUM':[1000.],'GFA_NONDOMESTIC_SUM':[0.]})
         result=stage.apply_ml_calibration(base,pd.DataFrame({'area':[50.]},index=index),
             {'main':FixedMain([.005,.99,.005]),'subclasses':{}})
-        self.assertEqual(result.Calibrated_Main_Class.iloc[0],UNKNOWN)
+        self.assertEqual(result.Calibrated_Main_Class.iloc[0],COMMERCIAL)
         self.assertEqual(result.Calibrated_Sub_Class.iloc[0],UNKNOWN)
-        self.assertEqual(result.ML_Decision_Status.iloc[0],'unresolved_source_conflict_unknown')
-        self.assertNotEqual(result.Calibrated_Source.iloc[0],'Machine_Learning_v2')
+        self.assertEqual(result.ML_Decision_Status.iloc[0],'main_function_inferred')
+        self.assertEqual(result.Calibrated_Source.iloc[0],'Machine_Learning_v2')
+        self.assertEqual(result.Function_Quality.iloc[0],'model_inferred')
         self.assertEqual(result.Calibrated_Mix_Proportion.iloc[0],'')
-        self.assertEqual(result.Observed_Residential_Area_Share.iloc[0],1)
+        self.assertEqual(result.GFA_DOMESTIC_SUM.iloc[0],1000.)
+        self.assertEqual(result.GFA_NONDOMESTIC_SUM.iloc[0],0.)
+        self.assertTrue(pd.isna(result.Observed_Residential_Area_Share.iloc[0]))
+        self.assertTrue(pd.isna(result.Observed_Nondomestic_Area_Share.iloc[0]))
+        self.assertIn('permit_accounting_not_observed_use',result.Classification_QA.iloc[0])
+        self.assertNotIn('registered_area_function_conflict',result.Classification_QA.iloc[0])
 
     def test_slender_unverified_structure_cannot_receive_model_only_function(self):
         index=pd.Index(['1','2'],name='BUILDINGSTRUCTUREID')

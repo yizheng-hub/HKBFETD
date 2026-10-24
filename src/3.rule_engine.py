@@ -5,6 +5,7 @@ import sys
 import warnings
 import json
 import re
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -439,7 +440,7 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     LANDSD_MAP = {
         '1': {'main': None, 'sub': None, 'desc': '法律管辖类别不表示建筑功能'},
         '2': {'main': '住宅类别', 'sub': '私人房屋（Private Housing）', 'desc': '新界小型屋宇'},
-        '3': {'main': '住宅类别', 'sub': '公共房屋（Public Housing）', 'desc': '房委会建筑'},
+        '3': {'main': None, 'sub': None, 'desc': '房委会产权类别不证明住宅用途或公共租住类别'},
         '4': {'main': None, 'sub': None, 'desc': '政府产权不表示建筑功能'},
         '5': {'main': None, 'sub': None, 'desc': '杂项结构需具体分析'},
         '9': {'main': None, 'sub': None, 'desc': '未分类'}
@@ -450,41 +451,14 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     result['Main_Class_Proportions'] = format_proportion_string(main_props)
     result['Sub_Class_Proportions'] = format_proportion_string(sub_props)
 
-    def get_safe_gfa(val):
-        if pd.isna(val) or val is None or str(val).strip() == '' or str(val).lower() == 'nan':
-            return 0.0
-        try:
-            v = float(val)
-            import math
-            return 0.0 if math.isnan(v) else v
-        except:
-            return 0.0
-            
-    dom_gfa = get_safe_gfa(info.get('GFA_DOMESTIC_SUM'))
-    nondom_gfa = get_safe_gfa(info.get('GFA_NONDOMESTIC_SUM'))
-    total_gfa = dom_gfa + nondom_gfa
-
-    if total_gfa > 20:
-        dom_ratio = dom_gfa / total_gfa
-        if dom_ratio > 0.99:
-            evidences.append({'src': 'GFA', 'main': '住宅类别', 'sub': None, 'conf': 1.0, 'weight': 100})
-            result['Main_Class_Proportions'] = '住宅类别:1.00'
-        elif dom_ratio < 0.01:
-            pass  # Non-domestic floor area does not distinguish commercial from industrial use.
-        else:
-            evidences.append({'src': 'GFA', 'main': '混合用途', 'sub': None, 'conf': 1.0, 'weight': 100})
-            result['Is_Mixed_Use'] = True
-
     bdb_reliable = info.get('BDBIAR_Match_Quality') == 'inside_unique'
     bdb_main, bdb_sub = classify_from_bdbiar_final(info.get('BDBIAR_CLASS') if bdb_reliable else None)
+    if bdb_main == '住宅类别' and not re.search(r'私人|private',str(info.get('BDBIAR_CLASS','')),re.IGNORECASE):
+        bdb_sub = None  # A generic residential class does not identify housing tenure.
     if bdb_main:
         evidences.append({'src': 'BDBIAR', 'main': standardize_main_class(bdb_main), 'sub': standardize_sub_class(bdb_sub), 'conf': 0.6, 'weight': 60})
 
     if not osm_records.empty:
-        osm_votes = []
-        osm_sub_votes = defaultdict(float)
-        total_osm_weight = 0.0
-        
         poi_details = []
         
         for _, row in osm_records.iterrows():
@@ -503,36 +477,9 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
                 if poi_type:
                     poi_details.append(f"{poi_name}[{poi_type}]")
                 
-            m, s_sub = classify_osm_feature(row, keyword_tool, use_case='rule_engine')
-            
-            if not a_clean and not s_clean:
-                if b_clean in ['apartments', 'residential', 'house']:
-                    m, s_sub = '住宅类别', '未知类别'
-                elif not b_clean:
-                    m = '未知类别'
-            m_std = standardize_main_class(m)
-            s_std = standardize_sub_class(s_sub)
-            w = float(row.get('osm_weight_score', 0.5))
-            
-            if m_std and m_std != '未知类别':
-                osm_votes.append((m_std, w))
-                if s_std and s_std != '未知类别':
-                    osm_sub_votes[s_std] += w
-                total_osm_weight += w
-        
         result['Matched_POIs'] = " | ".join(poi_details) if poi_details else "无命名POI"
-        
-        if osm_votes:
-            weighted_counts = {}
-            for m, w in osm_votes:
-                weighted_counts[m] = weighted_counts.get(m, 0) + w
-            
-            top_main = max(weighted_counts, key=weighted_counts.get)
-            final_weight = 75 + min(total_osm_weight * 20, 20)
-            if total_osm_weight < 0.1: final_weight = 40
-            
-            top_sub = max(osm_sub_votes, key=osm_sub_votes.get) if osm_sub_votes else None
-            evidences.append({'src': 'OSM', 'main': top_main, 'sub': top_sub, 'conf': min(total_osm_weight, 0.9), 'weight': final_weight})
+        # Tenants and construction-state tags do not establish a component's use.
+        # Matched whole-building function polygons are assessed after grouping.
 
     cat_code = str(info.get('CATEGORY', ''))
     landsd_info = LANDSD_MAP.get(cat_code, {'main': None})
@@ -558,16 +505,27 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
         evidences.append({'src': 'LandsD_Category', 'main': landsd_info['main'], 'sub': landsd_info['sub'], 'conf': weight/100.0, 'weight': weight})
 
     all_text_sources = [
-        safe_str(info.get('BUILDINGNAMETC', '')), safe_str(info.get('BUILDINGNAMEEN', '')),
-        safe_str(info.get('ALL_INFO_DESC', '')), safe_str(info.get('BDBIAR_ADDRESS_C', '')) if bdb_reliable else '', safe_str(info.get('name', ''))
+        safe_str(info.get('BUILDINGNAMETC', '')), safe_str(info.get('BUILDINGNAMEEN', ''))
     ]
     text_for_kw = " ".join([t for t in all_text_sources if t.strip()])
+    # "Resort" names a parent development and does not establish that a
+    # matched structure is lodging; explicit hotel/hostel terms remain usable.
+    text_for_kw = re.sub(r"\bresort\b|度假村|渡假村", " ", text_for_kw, flags=re.I)
     kws, clfs = classify_text_by_keywords(text_for_kw, keyword_tool['keyword_regex'], keyword_tool['keyword_map'])
 
     if clfs:
         best_kw_evidence = None
         max_kw_weight = 0
         text_lower = text_for_kw.lower()
+
+        def has_weight_term(terms):
+            for term in terms:
+                if re.fullmatch(r'[a-z0-9\s\-\.]+', term):
+                    if re.search(r'(?<![a-z0-9])' + re.escape(term) + r'(?![a-z0-9])', text_lower):
+                        return True
+                elif term in text_lower:
+                    return True
+            return False
         
         for main, sub in clfs:
             main_std, sub_std = standardize_main_class(main), standardize_sub_class(sub)
@@ -577,9 +535,9 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
                 functional_indicators = [r'\bbuilding\b', r'\btower\b', r'\bblock\b', r'\bhall\b', r'\bhouse\b', r'\bcentre\b', r'大厦', r'大楼', r'中心', r'馆']
                 has_functional_indicator = any(re.search(p, text_lower, re.IGNORECASE) for p in functional_indicators)
                 current_weight = 30 if has_functional_indicator and float(info.get('SHAPE_Area', 0)) > 50 else 65
-            elif main_std == '商业类别' and any(term in text_lower for term in ['commercial', '商業', 'office', '寫字樓', 'centre']):
+            elif main_std == '商业类别' and has_weight_term(['commercial', '商業', 'office', '寫字樓', 'centre']):
                 current_weight = 80
-            elif main_std == '工业类别' and any(term in text_lower for term in ['industrial', '工業', 'factory', '工廠', 'warehouse']):
+            elif main_std == '工业类别' and has_weight_term(['industrial', '工業', 'factory', '工廠', 'warehouse']):
                 current_weight = 80
             
             if any(k in STRONG_KEYWORDS for k in kws): current_weight = 90
@@ -601,8 +559,13 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             'factory': ('工业类别', '其他工业（Other Industrial）', 70), 'warehouse': ('工业类别', '非制造业（Non-manufacturing）', 70),
             'noise': ('非评估类别', '绝对噪声相关', 70), 'temporary': ('非评估类别', '临时/杂项设施', 70)
         }
-        best_match = max([{'src': 'Name_Keyword', 'main': m, 'sub': s, 'conf': w/100.0, 'weight': w} 
-                          for k, (m, s, w) in name_keywords.items() if k in text_for_name], 
+        def contains_complete_name_keyword(keyword):
+            if re.fullmatch(r'[a-z0-9\s\-\.]+', keyword):
+                return re.search(r'\b' + re.escape(keyword) + r'\b', text_for_name) is not None
+            return keyword in text_for_name
+
+        best_match = max([{'src': 'Name_Keyword', 'main': m, 'sub': s, 'conf': w/100.0, 'weight': w}
+                          for k, (m, s, w) in name_keywords.items() if contains_complete_name_keyword(k)],
                          key=lambda x: x['weight'], default=None)
         if best_match: evidences.append(best_match)
 
@@ -612,22 +575,6 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             evidence_weights[item['sub']] += item['weight']
     from classification import format_weights, sub_label, UNKNOWN
     result['Evidence_Subclass_Weights'] = format_weights({sub_label(k):v for k,v in evidence_weights.items() if sub_label(k)!=UNKNOWN})
-
-    if any(ev['src'] == 'GFA' and ev['main'] == '混合用途' for ev in evidences):
-        result['Final_Main_Class'] = '混合用途'
-        result['Is_Mixed_Use'] = True
-        significant_subs = {k: v for k, v in sub_props.items() if v > 0.01}
-        if significant_subs:
-            result['Sub_Class_Proportions'] = format_proportion_string(significant_subs)
-            sub_names = [str(k) for k, v in sorted(significant_subs.items(), key=lambda x: x[1], reverse=True) if pd.notna(k) and str(k).strip().lower() != 'nan']
-            result['Final_Sub_Class'] = "-".join(sub_names) if sub_names else '混合用途'
-        else:
-            result['Sub_Class_Proportions'], result['Final_Sub_Class'] = '混合用途:1.00', '混合用途'
-        
-        result['Classification_Source'] = 'GFA_Mixed'
-        result['Confidence_Score'] = 0.95
-        result['Evidence_Details'] = str([f"{e['src']}:{e['main']}({e['weight']})" for e in evidences])
-        return pd.Series(result)
 
     if not evidences: return pd.Series(result)
 
@@ -647,7 +594,6 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
     sorted_scores = sorted(score_board.items(), key=lambda x: x[1], reverse=True)
     winner_main, winner_score = sorted_scores[0]
     is_conflicted = False
-    forced_sub_class = None
 
     if len(sorted_scores) > 1:
         runner_up_main, runner_up_score = sorted_scores[1]
@@ -656,40 +602,18 @@ def classify_building_rule_engine_optimized(group, keyword_tool):
             winner_main = '未知类别'
             result['Is_Mixed_Use'] = False
 
-    override_to_commercial, podium_sub, podium_counts = detect_strong_commercial_podium(
-        info, osm_records, keyword_tool
-    )
-
-    if winner_main == '住宅类别' and override_to_commercial:
-        winner_main = '商业类别'
-        forced_sub_class = podium_sub or '其他商业（Other Commercial）'
-        winner_score = max(winner_score, 95)
-        is_conflicted = False
-        result['Is_Mixed_Use'] = False
-
-        evidences.append({
-            'src': 'Podium_Commercial_Override',
-            'main': '商业类别',
-            'sub': forced_sub_class,
-            'conf': 0.95,
-            'weight': 95
-        })
-
     if winner_main == '混合用途':
         result['Final_Sub_Class'] = '混合用途'
         source_str = "Fusion_Inferred_Mixed"
     else:
         supporting_evidences = [e for e in evidences if e['main'] == winner_main]
 
-        if forced_sub_class:
-            result['Final_Sub_Class'] = standardize_sub_class(forced_sub_class)
+        valid_subs = [e for e in supporting_evidences if e['sub'] and e['sub'] != '未知类别']
+        if valid_subs:
+            best_sub = max(valid_subs, key=lambda x: x['weight']).get('sub')
+            result['Final_Sub_Class'] = standardize_sub_class(best_sub)
         else:
-            valid_subs = [e for e in supporting_evidences if e['sub'] and e['sub'] != '未知类别']
-            if valid_subs:
-                best_sub = max(valid_subs, key=lambda x: x['weight']).get('sub')
-                result['Final_Sub_Class'] = standardize_sub_class(best_sub)
-            else:
-                result['Final_Sub_Class'] = '未知类别'
+            result['Final_Sub_Class'] = '未知类别'
 
         source_str = "+".join(sorted(list(set(e['src'] for e in supporting_evidences)))) if supporting_evidences else "Fusion_Inferred"
     
@@ -773,6 +697,41 @@ def load_rule_engine_inputs():
         import traceback
         traceback.print_exc()
         return None
+
+def apply_documented_functions(frame, evidence):
+    """Reconcile reviewed component uses, retaining prior decisions and facts."""
+    from classification import MAIN_CLASSES, UNKNOWN, taxonomy, finalize_function_fields
+    frame = frame.copy()
+    if evidence.evidence_id.duplicated().any() or evidence.building_id.duplicated().any():
+        raise ValueError('Documented functions need unique evidence and component IDs')
+    by_id = frame.set_index('BUILDINGSTRUCTUREID').BUILDINGCSUID
+    if not evidence.building_id.isin(by_id.index).all() or not evidence.csuid.eq(evidence.building_id.map(by_id)).all():
+        raise ValueError('Documented function ID/CSUID binding mismatch')
+    if not evidence.component_scope.eq('tower_component').all() or not evidence.source_url.str.startswith('https://').all():
+        raise ValueError('Documented functions need explicit component scope and source URLs')
+    frame['Documented_Function_Evidence'] = '[]'
+    frame['Function_Before_Document_Review'] = ''
+    positions = {bid:index for index,bid in frame.BUILDINGSTRUCTUREID.items()}
+    for fact in evidence.to_dict('records'):
+        index = positions[fact['building_id']]
+        row = frame.loc[index]
+        main, sub = fact['main_class'], fact['sub_class']
+        if main not in MAIN_CLASSES or (sub != UNKNOWN and taxonomy().get(sub) != main):
+            raise ValueError('Invalid documented function taxonomy')
+        if row.CSDI_Match_Quality != 'same_component_id_type_footprint' or row.CSDI_Structure_Type != 'Tower':
+            raise ValueError('Documented function lacks a matched tower component')
+        before = {col:None if pd.isna(row.get(col)) else row.get(col) for col in
+            ['Final_Main_Class','Final_Sub_Class','Classification_Source','Classification_QA','Is_Conflicted']}
+        frame.at[index,'Function_Before_Document_Review'] = json.dumps(before,ensure_ascii=False,default=str)
+        frame.at[index,'Documented_Function_Evidence'] = json.dumps([fact],ensure_ascii=False,separators=(',',':'))
+        frame.at[index,'Final_Main_Class'],frame.at[index,'Final_Sub_Class'] = main,sub
+        frame.at[index,'Classification_Source'] = 'Documented_component_function'
+        frame.at[index,'Is_Conflicted'] = False
+        qa = str(row.get('Classification_QA','')) if pd.notna(row.get('Classification_QA')) else ''
+        frame.at[index,'Classification_QA'] = ';'.join(flag for flag in qa.split(';') if flag and
+            flag not in ['function_scope_ambiguous','function_evidence_conflict','subclass_parent_conflict'])
+    return finalize_function_fields(frame)
+
 
 def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
     
@@ -865,6 +824,9 @@ def run_rule_engine(gdf_aggregated, gdf_official_library_full, keyword_tool):
 
     from classification import enrich_function_evidence
     df_rule_classified_final = enrich_function_evidence(df_rule_classified_final, gdf_aggregated)
+    function_facts = pd.read_csv(Path(__file__).resolve().parents[1]/'ctl/building_function_evidence.csv',
+                                 dtype=str,keep_default_na=False)
+    df_rule_classified_final = apply_documented_functions(df_rule_classified_final,function_facts)
     from config import OSM_STRUCTURES_PATH, OSM_STRUCTURES_METADATA_PATH, VERIFIED_STRUCTURES_PATH
     from ai_cache import file_hash
     from structural_use import apply_structural_use

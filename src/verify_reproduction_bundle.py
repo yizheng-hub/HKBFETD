@@ -3,9 +3,10 @@ import hashlib
 import json
 from pathlib import Path
 import zipfile
+from config import OUTPUT_DIR
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'output' / 'v2'
+OUT = Path(OUTPUT_DIR)
 
 
 def archive_hash(archive, name):

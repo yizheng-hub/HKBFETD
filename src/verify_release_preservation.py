@@ -8,9 +8,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 from ai_cache import file_hash
-from config import CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH
+from config import CSDI_BUILDINGS_PATH, CSDI_METADATA_PATH, OUTPUT_DIR
 
-out = ROOT/'output/v2'
+out = Path(OUTPUT_DIR)
 baseline = ROOT/'output/v2_terrain_baseline_20261023'
 key = 'Building_ID_建筑ID'
 new = pd.read_parquet(out/'HKBFETD_v2.parquet').set_index(key)
@@ -42,9 +42,26 @@ for record in protected['checks']:
         record['preserved_in_history_archive'] = True
     record['sha256'] = file_hash(source)
     record['unchanged'] = record['sha256'] == record['baseline_sha256']
+    record['authorized_repair_change'] = False
+    if record['path'] == 'ctl/keywords.json' and not record['unchanged']:
+        checkpoint = ROOT/'output/v2_before_court_keyword_repair_20261023/ctl/keywords.json'
+        assert file_hash(checkpoint) == record['baseline_sha256'], 'Court-repair keyword checkpoint does not match protected baseline'
+        previous = json.loads(checkpoint.read_text(encoding='utf-8'))
+        current = json.loads((ROOT/'ctl/keywords.json').read_text(encoding='utf-8'))
+        expected = json.loads(json.dumps(previous,ensure_ascii=False))
+        target = next((terms for category in expected.values() if isinstance(category,dict)
+            for label,terms in category.items() if 'Other Commercial' in label),None)
+        assert target is not None and isinstance(target,list) and target.count('Court') == 1 and '法庭' not in target
+        target.insert(target.index('Court'),'法庭')
+        assert current == expected, 'Keyword repair differs from the sole authorized court-context term addition'
+        record['authorized_repair_change'] = True
+        record['change_reason'] = 'Court-context repair: add the explicit Chinese term 法庭 beside the retained English Court token; English courts require explicit legal context.'
+        record['preserved_in_checkpoint'] = True
 protected['unchanged'] = sum(r['unchanged'] for r in protected['checks'])
 protected['changed'] = [r['path'] for r in protected['checks'] if not r['unchanged']]
-assert not protected['changed'], 'Original protected artifact changed'
+protected['authorized_repair_changes'] = [r['path'] for r in protected['checks'] if r.get('authorized_repair_change')]
+protected['unexpected_changed'] = [r['path'] for r in protected['checks'] if not r['unchanged'] and not r.get('authorized_repair_change')]
+assert not protected['unexpected_changed'], 'Unexpected protected artifact changed'
 (out/'legacy_preservation_validation.json').write_text(json.dumps(protected,ensure_ascii=False,indent=2),encoding='utf-8')
 for record in json.loads((baseline/'BASELINE_INDEX.json').read_text(encoding='utf-8'))['files']:
     assert file_hash(baseline/record['file']) == record['sha256']

@@ -188,6 +188,8 @@ SUBCLASS_PROPORTION_THRESHOLD = 0.05
 
 LLM_VERIFICATION_INPUT = RULE_ENGINE_OUTPUT_PATH
 LLM_VERIFICATION_OUTPUT = os.path.join(OUTPUT_DIR, "step4_llm_verified_classification.csv")
+NATIVE_FUNCTION_CHECKPOINT = os.path.join(DATA_DIR, "sources", "native_function_classifier_checkpoint.json")
+NATIVE_FUNCTION_POLICY_CLARIFICATION = os.path.join(DATA_DIR, "sources", "native_function_policy_clarification.txt")
 LLM_MODEL_NAME = "qwen2.5:3b"
 LLM_CONFIDENCE_THRESHOLD = 0.80
 BATCH_SAVE_INTERVAL = 100

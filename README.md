@@ -83,17 +83,20 @@ original placeholders. Planning zones describe intent, not observed building use
 ## Physical attributes and uncertainty
 
 `Height_m` is **structural component height**, calculated as top minus base
-elevation. Towers and podiums remain separate structures. It is not architectural
-spire height. CSDI Building source elevations are supplemented from a frozen
+elevation. Towers and podiums remain separate structures. Source top elements
+are not guaranteed to exclude masts or follow architectural-height conventions.
+CSDI Building source elevations are supplemented from a frozen
 official bulk download, matched by unique `BuildingCSUID`, compatible
 structure type and valid footprint IoU >=0.95. Local geometry is retained and
 the distributor's derived `height_m` is ignored. The original footprint table's
 `T` includes open-sided/temporary structures; CSDI's finer type is retained.
 
 `Ground_To_Top_Height_m` separately records datum top minus point DTM, or OSM
-reported height with an unverified reference. These are not substitutes for a
-missing component base. An ICC tower starting on a podium therefore has a
-different component and ground-to-top height. Source/quality/reference fields
+reported height with an unverified reference. OSM height is adopted only when its
+source object is uniquely scoped to that component; shared or unknown object scope
+remains raw candidate evidence. These are not substitutes for a missing component
+base. An ICC tower starting on a podium therefore has a different component and
+ground-to-top height. Source/quality/reference fields
 distinguish these meanings. Conflicts in comparable sources are withheld;
 different-reference discrepancies are flagged. Missing heights are not filled
 with 15 m. Original dimensions remain unchanged in raw fields.
@@ -119,14 +122,23 @@ Shared permits are not allocated in full to each constituent building.
 Source storey differences over max(1 storey, 10%) remain unresolved unless an
 explicit same-component physical-storey document reconciles them. The reviewed
 facts in `ctl/building_attribute_evidence.csv` preserve source URLs, dates,
-attribute-specific units/scopes and adoption decisions. Central Plaza's 75,
-Langham Place Office Tower's 59 and Prosperity Millennia Plaza's 32 are scoped
-tower counts; competing marketing labels and whole-development claims remain
+attribute-specific units/scopes and adoption decisions. Central Plaza's 75
+and Prosperity Millennia Plaza's 32 are supported tower counts. Langham Place's
+59 reported levels have an unresolved physical-storey reference and do not
+supply the primary count or floorplate proxy. Competing labels and whole-development claims remain
 separate. Mechanical/refuge levels are included where the document says so;
 reported storeys do not imply occupied office-floor counts. A component
 height/storey ratio outside 1–20 m also withholds the fused storeys and related
 proxy GFA because their scopes may differ; reported raw counts remain available.
+An otherwise publishable pair with at least two reported storeys and less than
+2 m of component span per storey is also quarantined until its vertical scope
+is reconciled. Both primary dimensions and dependent proxy GFA remain unknown;
+this screen does not identify which raw source value is wrong.
 These are conservative review rules, not measured error bounds.
+Explicit unresolved documentary height-reference conflicts withhold the primary
+height and optional height-derived storeys; the pre-review height and raw
+elevations remain available. A conflicting whole-tower height is not inserted
+as a component height.
 Owner-documented component GFA is retained separately from registration. The
 best-available area prefers registration, then documented component GFA, then
 the uniform-floorplate proxy. Rentable, saleable and unit internal areas are not
@@ -140,8 +152,12 @@ classification, heights, storeys or GFA. Its block-name matches remain candidate
 estate coordinates do not establish a component match. District-level download
 failures remain incomplete, rather than being interpreted as empty stock.
 OSM whole-building storeys may include a podium. They donate to component
-storeys only when the component base is within 3 m of sampled terrain; other
-OSM reports remain separate and do not invalidate official component counts.
+storeys only when the component base is within 3 m of sampled terrain and the raw
+source object is uniquely scoped to that component. Shared or unknown object scope
+remains candidate evidence and cannot supply primary storeys. The public fields
+`OSM_Dimension_Scope_QA`, `OSM_Dimension_Raw_Matched_Component_Count` and
+`OSM_Dimension_Candidate_Evidence` retain this scope and the raw reported values.
+Other OSM reports remain separate and do not invalidate official component counts.
 
 Building-footprint inventories also contain non-building structures. Fourteen
 components were geographically identified as bridge pylons, including eight
@@ -188,23 +204,46 @@ must come from `HKBFETD_API_KEY` / `HKBFETD_VISION_API_KEY` environment variable
 never place credentials in source files. Provider URL and model settings also
 accept `HKBFETD_*` environment variables, as listed in `src/config.py`.
 
-Steps 4 and 6 default to offline queues and input-matched cache reuse. Explicit
-commands for requesting new evidence are:
+Steps 4 and 6 default to offline queues and input-matched cache reuse. An optional
+`data/sources/native_function_classifier_checkpoint.json` and matching
+`native_function_policy_clarification.txt` replay recorded interactive native
+reviews without a model call. The checkpoint retains original requests, public
+packets, responses and root review evidence; separately bound source rows,
+geometry and policy must match. Missing original context stays explicitly
+missing. Only complete, individually approved labels can change classification;
+reviewed abstentions and stale evidence remain distinct. Native results are
+separate from provider API caches and from ML training labels.
+Changed requests replace earlier responses only through an explicit, hash-bound
+supersession; the earlier packets remain intact. Rejected labels are recorded as
+nonadoptions, and original response bytes are retained separately from root corrections.
+
+Explicit commands for requesting new evidence are:
 
 ```powershell
 python src/4.llm_verification.py --refresh --limit 100
 python src/5.evaluation_and_merge.py
-python src/6.geometry_ai_arbitration.py --images --refresh --limit 100
+$env:HKBFETD_RUN_ROOT = (Resolve-Path reproduction_run).Path
+python src/6.geometry_ai_arbitration.py --images --scope-id-file review_scope_ids.csv --image-limit 100
 ```
+
+The image scope CSV contains `fragment_id` or `building_id`; alternatively,
+`--pair-whitelist` requires `fragment_id,host_id,Context_SHA256`. Images are
+generated only inside the isolated run root. Each pair binds its geometries,
+function context, imagery provider, acquisition time and image hashes; both
+views use the same basemap capture. Image generation makes no model API call.
+The separate `--refresh --limit 100` option requests paid-provider decisions
+only when explicitly enabled with a configured key.
 
 After reviewed changes, regenerate Steps 7–10. New decisions are saved atomically
 with prompt/model/input and image hashes. A successful fingerprinted checkpoint
 can survive loss of its temporary image path. Every surviving image is still checked by content,
 including when the other image has been lost. Old caches without these hashes
 remain historical evidence and are not silently treated as fresh v2 verification.
-Step 6 recovers the 200 available images from `Validation_Materials.zip` and
-exports a resume inventory; other deleted images require reacquisition and may
-represent different imagery dates.
+Step 6 recovers the 200 archived images from `Validation_Materials.zip` into the
+run root and exports their archive/payload hashes. These historical pixels have
+unverified geometry context and cannot satisfy a new scoped image review.
+Other deleted images require reacquisition and may represent different imagery
+dates. Existing user image directories are not modified by recovery.
 
 ## Pipeline Order
 
@@ -234,6 +273,40 @@ Run scripts in order under `src/`:
 
 ## Main Deliverables
 
+Whole-stock native-agent factual review is incomplete. Program checks and model
+agreement with weak source labels are separate from independently verified facts.
+The native-agent ledger in `output/row_review_20261023/` records actual per-row
+coverage; pending rows are never counted as LLM reviewed. Step 4's default offline
+queue does not call an LLM. Its explicit external API mode is a different workflow.
+
+The current review scope uses automatic checks over all 341,153 records, followed
+by native review of the 2,939 Buildings Department related risk candidates.
+That fixed initial queue has been reviewed; source-scope repairs, rebuilding,
+retraining and a fresh independent final review remain separate acceptance gates.
+Unlinked village-house records are not individually searched. Missing and
+unverified values remain explicit unknowns rather than invented replacements.
+
+Tenant points, addresses and linked access descriptions do not establish an
+entire component's dominant function. Matched function-bearing building polygons,
+scoped sources and reviewed `ctl/building_function_evidence.csv` supply function
+evidence. Housing subtypes are not model-filled from morphology: unverified
+suggestions remain in `ML_Subclass_Candidate`. Reviewed documentary functions
+retain their prior decisions and source scope. Unknown documented subclasses
+are not overwritten by model suggestions.
+
+Native session review continues with `src/native_review_progress.py`. Its local
+state is kept in `output/native_review_progress/`; exported batches remain
+pending until exact, dataset-bound results with queries and source-access status
+are ingested. Pending batches reserve their IDs to avoid duplicate agent work.
+Historical distinct-row coverage and current-snapshot coverage are reported
+separately; a changed dataset does not inherit an earlier factual certificate.
+The helper never calls an external model or purchases API credits.
+
+Unresolved documentary storey-reference conflicts withhold the primary count
+and its footprint-based GFA proxy, retaining the original count and cited
+alternative in the evidence fields. A tower's residential use does not establish
+private versus subsidized tenure.
+
 - `output/v2/HKBFETD_v2.csv`, `.geojson`, `.parquet`
 - `output/v2/v1_1_to_v2_building_changes.csv` and `comparison_summary.json`
 - `output/v2/model_validation.json` and spatial split/prediction tables
@@ -257,6 +330,83 @@ separate local archive. The publication folder includes exact checksums.
 `audit_dataset.py` reproduces the initial v1/v1.1 diagnostic audit from the
 preserved root-level releases. Its historical flags are not a v2 acceptance
 result; use the release verification commands above for v2.
+
+A single permit-to-structure link establishes administrative uniqueness, rather
+than physical component, construction phase or current-use correspondence.
+Its areas require explicit physical-scope evidence before component adoption.
+Domestic/nondomestic permit accounts never supply measured current-use shares
+or force a mixed-use label. The reported permit areas remain
+available with `Permit_GFA_Usable=false` and the scope reason; they cannot supply
+component GFA, mixed-use labels or measured area shares. A positive structure
+registration is also withheld when component storey scope is unresolved: its raw
+value remains available, with `registered_component_scope_unresolved` and a
+withheld-source marker. A count-only repair does not recertify the area.
+Other reported registrations retain their values with an explicit unvalidated
+quality label. Independently documented component GFA retains its own source.
+
+When the source component height and selected reported storeys imply less than
+1 m per storey, both primary values are withheld for unresolved component scope.
+The same conservative hold applies to unreconciled multi-storey pairs below
+2 m per storey. Single-level structures and the 2 m boundary are not rejected
+by that additional screen; high spans per storey remain separate review signals.
+Explicit evidence that only the count has the wrong scope preserves the
+independently supported component height. Documentary component evidence is
+evaluated separately and never replaced by height divided by three.
+Original elevations, reported counts and the height candidate remain available;
+the candidate is not an accepted fallback height. Tall bridge pylons retain
+their separately identified structural heights.
+
+The retrieved official CSDI schema does not define `Storeys` as aboveground-only.
+Its raw count and separate basement count are retained with explicit scope QA;
+neither the count alone nor subtracting basements supplies the primary
+aboveground count or floor-area proxy. Explicit native aboveground counts,
+compatible OSM levels and source-scoped component documents remain eligible.
+Both LandsD and CSDI names are retained to expose ancillary-component identities.
+
+Generic `Court` alone is not judicial-use evidence: keyword classification requires
+a specific legal-court context (such as High Court, District Court or Court of Final
+Appeal, or an explicit Chinese court/courthouse term). Housing names, sports courts
+and food courts do not imply judicial use; other independent evidence remains in
+force.
+
+An Active CSDI component explicitly named as a substation/transformer station
+must match the component ID, type and footprint before its utility use is
+mapped to the existing Other Commercial taxonomy. The source-name evidence
+retains the prior decision; parent housing/school/hospital names and visual
+inheritance cannot replace this component use. A residential permit linked to
+such a station remains unusable until its component scope is reconciled.
+
+Exact component purpose names `Residents Club` and `Assembly Hall` (including
+their recorded Chinese names) use the same Active, component identity and
+footprint gate to infer Other Commercial. Compound names do not trigger this
+rule. This source-name inference establishes neither current operation nor
+measured use-area shares, and shared school or residential tags do not transfer
+to the named component.
+
+The BDBIAR integrity registry uses stable Block IDs, preserving original point
+matches and source candidates. Confirmed source inconsistencies and unresolved
+component identities block BD age/class donations. Snapshot-coordinate changes
+are separately marked; newer points are not automatically substituted. These
+controls do not invalidate independent LandsD permit or registration sources.
+
+Exact active CSDI names distinguish an institution's residences from its teaching,
+clinical and service components. School Dental Clinic remains healthcare; school
+or university affiliation does not turn a dormitory into a teaching building.
+Residence offices, multi-function halls and compound school/quarters names do not
+establish a single dominant function. Unresolved component names retain their
+prior decision and source text as evidence, with an unknown primary function and
+source-conflict flags preventing model-only completion. Existing mixed functions
+are not collapsed solely by a name keyword.
+
+Training retains independently supported function labels when only area-scope
+QA is unresolved; those area warnings remain in the records. Unresolved function
+scope, conflicting use evidence and subclass/parent conflicts still exclude labels.
+
+Langham Place's 59 reported levels include roof levels; the earlier normalized
+storey adoption is withdrawn pending scope reconciliation. Its partial valuation
+gross rentable area and rounded marketing gross area are not component GFA.
+Parking-machine layers likewise do not establish occupied storeys or continuous
+floor plates. All original reports remain in the evidence fields and old version.
 
 ## License
 

@@ -12,6 +12,15 @@ import geopandas as gpd
 from shapely.geometry import Point
 from pyproj import Transformer
 
+_LEGAL_COURT_PREFIX_RE = re.compile(
+    r"\b(?:high|district|supreme|family|juvenile|small claims|magistrate(?:s|'s|s')?|coroner(?:s|'s|s')?)\s+$",
+    re.IGNORECASE,
+)
+_LEGAL_COURT_SUFFIX_RE = re.compile(
+    r"^\s+(?:house\b|of\s+(?:final\s+appeal|appeal|first\s+instance)\b)",
+    re.IGNORECASE,
+)
+
 try:
     cc = OpenCC('t2s')
 except Exception as e:
@@ -110,7 +119,16 @@ def classify_text_by_keywords(text, keyword_regex, keyword_map):
     """Function documentation."""
     if not text or pd.isna(text) or not keyword_regex:
         return [], []
-    matches = keyword_regex.findall(to_simplified_chinese(text).lower().strip())
+    normalized = to_simplified_chinese(text).lower().replace('’', "'").replace('‘', "'").strip()
+    matches = []
+    for match in keyword_regex.finditer(normalized):
+        keyword = match.group(0)
+        if keyword.lower() == 'court':
+            prefix = normalized[max(0, match.start() - 40):match.start()]
+            suffix = normalized[match.end():]
+            if not (_LEGAL_COURT_PREFIX_RE.search(prefix) or _LEGAL_COURT_SUFFIX_RE.search(suffix)):
+                continue
+        matches.append(keyword)
     if matches:
         ordered = list(dict.fromkeys(matches))
         return ordered, list(dict.fromkeys(keyword_map[kw] for kw in ordered))
@@ -321,6 +339,8 @@ def is_non_assessed_main(value):
 
 def sanitize_dataframe_for_geojson(df):
     def serialize(value):
+        if value is pd.NA or value is pd.NaT:
+            return None
         if isinstance(value, np.ndarray):
             value = value.tolist()
         if isinstance(value, (dict, list, tuple)):

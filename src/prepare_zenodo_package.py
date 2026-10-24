@@ -10,9 +10,14 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
 from ai_cache import file_hash
 from run_pipeline import RELEASE_FIGURES
-from config import CSDI_METADATA_PATH
+from config import CSDI_METADATA_PATH, OUTPUT_DIR, INTERMEDIATE_DIR
 
-out=ROOT/'output/v2'
+out=Path(OUTPUT_DIR)
+acceptance=json.loads((out/'final_acceptance.json').read_text(encoding='utf-8'))
+if not (acceptance.get('status')=='ACCEPTED_FOR_RELEASE' and
+        acceptance.get('engineering_gates_passed') and acceptance.get('fresh_independent_reviews_passed') and
+        acceptance.get('dataset_sha256')==file_hash(out/'HKBFETD_v2.parquet')):
+    raise RuntimeError('Current dataset has not passed the recorded engineering and fresh independent acceptance gates')
 destination=ROOT/'output/zenodo_upload_v2'
 marker=destination/'HKBFETD_PACKAGE.txt'
 if destination.exists() and not marker.exists():
@@ -26,7 +31,12 @@ files=['HKBFETD_v2.csv','HKBFETD_v2.geojson','HKBFETD_v2.parquet','RELEASE_NOTES
     'conda-win64-explicit.txt','unit_test_results.txt','legacy_preservation_validation.json','v2_source_snapshot.zip']
 files += ['reproduction_inputs.zip']
 files += [name for name in ['attribute_enrichment_summary.json','attribute_enrichment_field_changes.csv',
-    'documented_attribute_evidence.csv','attribute_source_evidence.zip','enrichment_independent_review.txt'] if (out/name).exists()]
+    'documented_attribute_evidence.csv','attribute_source_evidence.zip','enrichment_independent_review.txt',
+    'ROW_REVIEW_STATUS_zh.txt','row_review_coverage.json','row_revision_validation.json',
+    'row_revision_field_changes.csv','documented_function_evidence.csv',
+    'native_row_review_evidence.zip','unified_repair_validation.json',
+    'downstream_reproduction_validation.json','risk_delta_after_unified_repair.json',
+    'final_acceptance.json'] if (out/name).exists()]
 for name in files:
     shutil.copy2(out/name,destination/name)
 for name in ['reproduction_bundle_validation.json','release_format_validation.json',
@@ -42,7 +52,9 @@ changes=['v1_1_to_v2_building_changes.csv','v1_1_to_v2_class_transition.csv',
     'terrain_baseline_to_component_revision.csv','height_only_fixed_model_sensitivity.csv',
     'small_tall_resolved_structures.csv','verified_nonbuilding_structures.csv','stratified_manual_validation_template.csv',
     'model_spatial_split.csv','model_holdout_predictions.csv','reader_cases_v2.csv']
-changes += [name for name in ['before_enrichment_to_v2_attribute_changes.parquet'] if (out/name).exists()]
+changes += [name for name in ['before_enrichment_to_v2_attribute_changes.parquet',
+    'before_row_review_to_v2_attribute_changes.parquet','before_risk_repair_field_changes.csv',
+    'before_risk_repair_all_field_changes.parquet','reviewed_typical_cases.csv'] if (out/name).exists()]
 with zipfile.ZipFile(destination/'comparisons_and_validation.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
     for name in changes:archive.write(out/name,name)
     for name in RELEASE_FIGURES:archive.write(out/'figures'/name,'figures/'+name)
@@ -51,7 +63,7 @@ with zipfile.ZipFile(destination/'comparisons_and_validation.zip','w',compressio
         # Raw provider datasets are kept in the separate reproduction_inputs.zip.
         archive.write(path,'source_provenance/'+path.name)
 with zipfile.ZipFile(destination/'trained_model.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
-    archive.write(ROOT/'intermediate_files/v2/ml_models.pkl','ml_models.pkl')
+    archive.write(Path(INTERMEDIATE_DIR)/'ml_models.pkl','ml_models.pkl')
 validation=json.loads((out/'component_revision_validation.json').read_text(encoding='utf-8'))
 metrics=json.loads((out/'model_validation.json').read_text(encoding='utf-8'))
 comparison=json.loads((out/'comparison_summary.json').read_text(encoding='utf-8'))
@@ -68,7 +80,7 @@ report=f'''HKBFETD v2 本轮修订与验收
 舍弃报告层数的冲突记录 {quality['floor_conflict_records']:,} 条，原报告字段仍保留。高度除以 3 m 仅为另列假设，不进入报告层数和楼面面积。
 小占地高结构阈值命中 {validation['small_tall_threshold_records']} 条，均为有官方桥梁资料和空间位置支撑的桥塔；未解释的此类记录 {validation['small_tall_unresolved_records']} 条。桥塔高度保留，不作为楼宇能耗面积。
 全部非楼宇结构识别 {quality['nonbuilding_structures_excluded_from_energy_area']} 条；共享/多份许可证 {quality['shared_permit_not_allocated_records']:,} 条不再将组级面积重复赋给各栋。
-用途与年份只接受唯一位于单个轮廓内的屋宇署点。多点、共享点、近邻点不作为确定属性；名称中的“大厦/Plaza”等不能单独确定办公室功能。
+屋宇署用途与年份需同时通过唯一组件点位匹配和来源完整性门。地址与坐标矛盾或组件身份未决的记录不捐赠属性，原值保留为候选；多点、共享点、近邻点不作为确定属性。名称中的“大厦/Plaza”等不能单独确定办公室功能。
 面积证据、POI 权重、模型概率分别存储。单功能比例明确标为假设；缺少分用途面积的混合比例留空。
 
 模型主类空间留出宏 F1={metrics['macro_f1']:.6f}，仅衡量与来源推断弱标签的一致性。每类还需至少 30 条超过置信阈值的留出预测、来源标签精确率至少 0.80，才允许模型补齐。
@@ -89,7 +101,13 @@ v1.1→v2 主类变化 {comparison['changed']['Main_Class']:,} 条、子类变�
 '''
 if (out/'attribute_enrichment_summary.json').exists():
     enrichment=json.loads((out/'attribute_enrichment_summary.json').read_text(encoding='utf-8'))
-    report += f"\n补充修订：采用地政总署2026-10-20官方批量快照，保留记录创建/更新时间，不将其冒充竣工或测量日期。在线检索覆盖{enrichment['web_researched_buildings']}个有名建筑记录（包括排除错配来源的记录），不是全港逐栋网页核实。明确组件口径的层数文档{enrichment['component_storey_documents']}项、文档GFA{enrichment['component_gfa_documents']}项。\n中环广场塔楼75层、朗豪坊办公塔楼59层、泓富产业千禧广场32层采用对应文档调和；来源旧值、其他计数口径、地下层及不同面积种类分别保留。文档GFA不冒充登记GFA，住宅单位内部面积及可出租面积不当作GFA。\n修订前v2至本次所有共有字段对照及覆盖变化见attribute_enrichment_summary.json和对照附件；原检查点、模型、输入与代码在本地v2_before_enrichment_20261023中保留。\n"
+    report += f"\n补充修订：采用地政总署2026-10-20官方批量快照，保留记录创建/更新时间，不将其冒充竣工或测量日期。属性证据表覆盖{enrichment['web_researched_buildings']}个有名建筑记录（包括排除错配来源的记录），不是全港逐栋网页核实。明确组件口径的层数文档{enrichment['component_storey_documents']}项、文档GFA{enrichment['component_gfa_documents']}项。\n中环广场塔楼75层、泓富产业千禧广场32层采用对应文档调和；朗豪坊59个报告层级的物理层数口径未决，主层数与依赖代理面积留空。来源旧值、其他计数口径、地下层及不同面积种类分别保留。文档GFA不冒充登记GFA，住宅单位内部面积及可出租面积不当作GFA。\n修订前v2至本次所有共有字段对照及覆盖变化见attribute_enrichment_summary.json和对照附件；原检查点、模型、输入与代码在本地v2_before_enrichment_20261023中保留。\n"
+if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
+    report = (out/'ROW_REVIEW_STATUS_zh.txt').read_text(encoding='utf-8') + '\n' + report
+    report += '\n逐条复查后的批量修订：租户POI不再确定整栋用途，地址及连接天桥描述不再冒充主体用途；房委会产权类别不单独确定住宅用途或公屋子类。模型住房子类仅保留为候选，不自动采用。中环广场文档总高与来源组件高的参考口径尚未调和，主高度留空，原高程与复查前数值保留；75层有组件文档支持。\n'
+    if (out/'row_revision_validation.json').exists():
+        revision=json.loads((out/'row_revision_validation.json').read_text(encoding='utf-8'))
+        report += f"本轮相对90300be候选版：主类改变{revision['changed_main_classes']:,}条，子类改变{revision['changed_subclasses']:,}条，明确绑定组件的用途文档事实{revision['function_facts_checked']}项。此为规则、来源及模型联合修订，不是独立实测纠错数量。\n"
 (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 (destination/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 description=f'''HK-BFETD: Hong Kong Building Function and Energy Typology Dataset — version 2.0
@@ -100,7 +118,7 @@ The primary height is structural component top elevation minus base elevation, w
 
 Component heights are available for {validation['component_height_known']:,} records; {validation['component_height_unknown']:,} remain explicitly null. Reported, conflict-checked storeys are available for {validation['reported_storeys_known']:,} records. Height-derived storeys do not enter reported counts or GFA. Unknown/conflicting source values are not fabricated. Eight small-footprint/tall objects have been identified as bridge pylons and retained as nonbuilding structural records excluded from building energy-area allocation.
 
-Source-scoped documents reconcile three tower storey counts; alternative counts, basement levels, mechanical/refuge conventions and floor labels remain separate evidence. GFA prefers scoped registration, then documented same-component gross floor area, then an explicit footprint-times-reported-storeys approximation. Owner-reported approximate areas remain approximate. Rentable, saleable and unit internal areas are not GFA. Shared permits are not allocated in full to every structure. POI evidence weights and classifier probabilities are not measured use-area fractions. Single-function vectors are documented assumptions; unsupported mixed-use shares remain null.
+Source-scoped documents reconcile supported component storey counts; unresolved physical-storey references remain null. Alternative counts, basement levels, mechanical/refuge conventions and floor labels remain separate evidence. GFA prefers scoped registration, then documented same-component gross floor area, then an explicit footprint-times-reported-storeys approximation. Owner-reported approximate areas remain approximate. Rentable, saleable and unit internal areas are not GFA. Shared permits are not allocated in full to every structure, and administrative uniqueness alone does not establish physical scope. POI evidence weights, permit accounting splits and classifier probabilities are not measured current-use area fractions. Single-function vectors are documented assumptions; unsupported mixed-use shares remain null.
 
 Function models were retrained using disjoint 2 km spatial blocks and training-partition imputation. Spatial holdout macro-F1 is {metrics['macro_f1']:.6f} against source-inferred weak labels; this is not independent field-survey accuracy. Blocks do not impose a 2 km buffer between every training and holdout building. Unknown source conflicts remain unknown despite high model probability. Main/subclass provenance, source/quality flags, full field definitions, old/new comparisons and exploratory fixed-model height sensitivity accompany the products.
 
@@ -111,21 +129,30 @@ The inventory is the original 2025-02-06 footprint stock supplemented by frozen 
 
 Create a new version of the existing Zenodo record and retain its creator and rights metadata. This file is a description draft, not a newly assigned DOI or a claim of zero physical errors. Software licensing does not replace the dataset/source-provider terms.
 '''
+if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
+    description = 'Review scope: whole-inventory engineering checks and the agreed Buildings Department related risk review. This does not certify every attribute as independently surveyed. See ROW_REVIEW_STATUS_zh.txt and row_review_coverage.json.\n\n' + description
+    description += '\nResidential tenure subclasses are never filled solely by the model. Tenant POIs, addresses and access-link descriptions do not establish whole-component use. Documented component facts and prior decisions are retained. Known unresolved height-reference differences withhold the primary height rather than forcing architectural total height into a structural component field.\n'
 (destination/'ZENODO_DESCRIPTION_EN.txt').write_text(description,encoding='utf-8')
 (destination/'READ_ME_FIRST_zh.txt').write_text('''HKBFETD v2 上传候选包
 主高度采用结构本体顶部减底部高程，地面至顶部另列。首先阅读 RELEASE_NOTES_zh.txt 和 field_dictionary.csv。
 CSV、GeoJSON、GeoParquet 为同一版本的三种格式，均保留原 341,153 个建筑/结构 ID；推荐 GIS 使用 GeoParquet。
 comparisons_and_validation.zip 包括逐栋新旧对照、空间验证、桥塔处理结果、独立验证抽样模板及来源元数据。
 trained_model.zip 为本次重训模型；v2_source_snapshot.zip 为确切源代码、控制文件、测试及环境信息。
-reproduction_inputs.zip 保存本次冻结输入；解压到源码根目录并保留相对路径，再运行 python src/run_pipeline.py --resume --input-bundle。
+reproduction_inputs.zip 保存本次冻结输入；在新的源码目录中解压并保留相对路径，再运行 python src/run_pipeline.py --run-root reproduction_run --input-bundle，将复现输出写入独立目录。
 原始输入作为单独压缩包随候选包保存；各来源元数据和提供方条款仍适用。
 在现有 https://zenodo.org/records/20710499 中创建新版本，保留作者及数据许可信息。新版本 DOI 由 Zenodo 发布时生成。
 独立智能体的程序/数据检查结果完成后列于 independent_review_report.txt。这类检查不等同于对全香港逐栋实测，也不构成绝对零误差保证。
 ''',encoding='utf-8')
+if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
+    first=destination/'READ_ME_FIRST_zh.txt'
+    first.write_text('【已按约定风险范围验收】全库工程检查与屋宇署关联风险核查的范围、来源及未证实项见ROW_REVIEW_STATUS_zh.txt；不宣称全库每个属性均经独立实测。\n\n'+first.read_text(encoding='utf-8'),encoding='utf-8')
 inventory={p.name:{'bytes':p.stat().st_size,'sha256':file_hash(p)} for p in sorted(destination.iterdir()) if p.is_file() and p.name not in ['SHA256SUMS.txt','package_manifest.json']}
 manifest={'version':'2.0','created_utc':datetime.now(timezone.utc).isoformat(),
     'previous_record':'https://zenodo.org/records/20710499','remote_actions':'none',
     'frozen_inputs_archive':'reproduction_inputs.zip','files':inventory}
+if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
+    manifest['row_review_status']='ACCEPTED_SCOPED_REVIEW'
+manifest['final_acceptance']=acceptance
 (destination/'package_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
 inventory['package_manifest.json']={'sha256':file_hash(destination/'package_manifest.json')}
 (destination/'SHA256SUMS.txt').write_text(''.join(record['sha256']+'  '+name+'\n' for name,record in sorted(inventory.items())),encoding='utf-8')

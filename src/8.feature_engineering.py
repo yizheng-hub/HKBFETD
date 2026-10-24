@@ -22,10 +22,14 @@ def prepare_training_data(frame):
     bdbiar = source.str.contains('BDBIAR',regex=False) & frame.BDBIAR_Match_Quality.eq('inside_unique')
     keyword = source.str.contains('Keyword',regex=False)
     building = source.eq('OSM_Building_Function')
-    eligible = frame.Final_Main_Class.isin(MAIN_CLASSES) & (official | bdbiar | keyword | building)
+    documented = source.eq('Documented_component_function')
+    eligible = frame.Final_Main_Class.isin(MAIN_CLASSES) & (official | bdbiar | keyword | building | documented)
     eligible &= ~source.str.contains('Machine_Learning|Inherited|LLM',regex=True)
     if 'Classification_QA' in frame:
-        eligible &= frame.Classification_QA.fillna('').eq('')
+        area_qa = {'permit_accounting_not_observed_use','permit_physical_scope_unverified',
+                   'permit_component_scope_unresolved','registered_gfa_component_scope_unresolved'}
+        eligible &= frame.Classification_QA.fillna('').map(
+            lambda flags: not (set(filter(None,flags.split(';'))) - area_qa))
     if 'Is_Conflicted' in frame:
         eligible &= ~frame.Is_Conflicted.astype(str).str.lower().eq('true')
     training = frame[eligible].copy()

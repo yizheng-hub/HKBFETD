@@ -8,12 +8,13 @@ import pandas as pd
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
-from classification import UNKNOWN, RESIDENTIAL
+from classification import UNKNOWN
+from config import OUTPUT_DIR, INTERMEDIATE_DIR
 
-out=ROOT/'output/v2'
-with open(ROOT/'intermediate_files/v2/feature_X_all.pkl','rb') as stream:X=pickle.load(stream)
-with open(ROOT/'intermediate_files/v2/feature_base_indexed.pkl','rb') as stream:base=pickle.load(stream)
-with open(ROOT/'intermediate_files/v2/ml_models.pkl','rb') as stream:package=pickle.load(stream)
+out=Path(OUTPUT_DIR)
+with open(Path(INTERMEDIATE_DIR)/'feature_X_all.pkl','rb') as stream:X=pickle.load(stream)
+with open(Path(INTERMEDIATE_DIR)/'feature_base_indexed.pkl','rb') as stream:base=pickle.load(stream)
+with open(Path(INTERMEDIATE_DIR)/'ml_models.pkl','rb') as stream:package=pickle.load(stream)
 old=pd.read_csv(ROOT/'output/HK_UBEM_Buildings_Public_v1_1.csv',
     usecols=['Building_ID_建筑ID','Height_m_建筑高度'],dtype={'Building_ID_建筑ID':'string'}).set_index('Building_ID_建筑ID')
 assert set(old.index)==set(X.index)
@@ -39,11 +40,6 @@ legacy_fill &= np.isin(classes[legacy.argmax(axis=1)],package['validated_main_cl
 unverified_structure=base.Structure_Use_Type.fillna('').eq('')
 actual_fill &= ~(X.Estimated_Height.gt(100) & X.area.lt(150) & unverified_structure)
 legacy_fill &= ~(perturbed.Estimated_Height.gt(100) & X.area.lt(150) & unverified_structure)
-only_domestic = (base.GFA_DOMESTIC_SUM.gt(0) & base.GFA_NONDOMESTIC_SUM.eq(0)).to_numpy()
-only_nondomestic = (base.GFA_DOMESTIC_SUM.eq(0) & base.GFA_NONDOMESTIC_SUM.gt(0)).to_numpy()
-for probability,fill in [(actual,actual_fill),(legacy,legacy_fill)]:
-    prediction = classes[probability.argmax(axis=1)]
-    fill &= ~((only_domestic & (prediction != RESIDENTIAL)) | (only_nondomestic & (prediction == RESIDENTIAL)))
 assert np.array_equal(eligible.to_numpy() & actual_fill,
     published['Classification_Source_分类来源'].eq('Machine_Learning_v2').to_numpy()), 'Sensitivity acceptance differs from published decisions'
 decision_changed=eligible.to_numpy()&((actual_fill!=legacy_fill)|(changed&actual_fill&legacy_fill))

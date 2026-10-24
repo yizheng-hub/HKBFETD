@@ -31,6 +31,10 @@ def input_files(cfg):
         cfg.OSM_SOURCE_SNAPSHOT,cfg.TERRAIN_SAMPLES_PATH,cfg.TERRAIN_METADATA_PATH,
         cfg.CSDI_BUILDINGS_PATH,cfg.CSDI_METADATA_PATH,cfg.OSM_STRUCTURES_PATH,cfg.OSM_STRUCTURES_METADATA_PATH]]
     files.append(root/'data'/'sources'/'source_manifest.json')
+    # Native checkpoint and clarification are immutable replay inputs when present.
+    for path in [Path(cfg.NATIVE_FUNCTION_CHECKPOINT), Path(cfg.NATIVE_FUNCTION_POLICY_CLARIFICATION)]:
+        if path.is_file():
+            files.append(path)
     # Historical evidence is optional for inference, but frozen when available.
     for path in [Path(cfg.LEGACY_OUTPUT_DIR)/'step4_llm_verified_classification.csv',
                  Path(cfg.LEGACY_OUTPUT_DIR)/'step6_ai_decisions_log.csv',
@@ -71,6 +75,16 @@ def expected_outputs(cfg):
 
 def hash_paths(paths,root):
     return {str(path.relative_to(root)).replace('\\','/'):{'sha256':file_hash(path),'bytes':path.stat().st_size} for path in paths}
+
+
+def stage_input_signature(inputs, step, native_paths, root):
+    """Keep optional native replay artifacts out of upstream Step 1–3 signatures."""
+    if step > 3:
+        selected = inputs
+    else:
+        native_keys = {str(Path(path).relative_to(root)).replace('\\','/') for path in native_paths}
+        selected = {key: value for key, value in inputs.items() if key not in native_keys}
+    return fingerprint(selected)
 
 
 def current_environment():
@@ -125,6 +139,15 @@ def make_bundles(cfg,files,include_inputs):
                 archive.write(path,path.relative_to(root).as_posix())
 
 
+def stage_source_paths(root, step):
+    shared = [root/'src'/name for name in ['config.py','data_quality.py','classification.py','utils.py',
+        'stage_io.py','ai_cache.py','structural_use.py','bdbiar_integrity.py']]
+    paths = [root/'src'/SCRIPTS[step-1], *shared]
+    if step in [4, 5]:
+        paths.append(root/'src'/'native_function_checkpoint.py')
+    return paths
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resume',action='store_true')
@@ -139,6 +162,7 @@ def main():
     files=input_files(cfg)
     inputs=hash_paths(files,root)
     input_signature=fingerprint(inputs)
+    native_paths=[Path(cfg.NATIVE_FUNCTION_CHECKPOINT),Path(cfg.NATIVE_FUNCTION_POLICY_CLARIFICATION)]
     manifest_path=out/'pipeline_run_manifest.json'
     previous=json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.exists() else {}
     runtime=current_environment()
@@ -148,15 +172,19 @@ def main():
         'api_requests':'disabled in default replay','started_utc':datetime.now(timezone.utc).isoformat()}
     freeze_environment(out,runtime)
     outputs=expected_outputs(cfg)
-    shared=[root/'src'/name for name in ['config.py','data_quality.py','classification.py','utils.py','stage_io.py','ai_cache.py','structural_use.py']]
     upstream='raw_inputs'
     environment=os.environ.copy()
     environment.update({'PYTHONIOENCODING':'utf-8','TQDM_DISABLE':'1','PYTHONHASHSEED':'0'})
     for step,script in enumerate(SCRIPTS[:args.through],start=1):
-        source=hash_paths([root/'src'/script]+shared,root)
-        signature_fields={'source':source,'inputs':input_signature,'upstream':upstream}
-        if step in [2,3]:
+        source=hash_paths(stage_source_paths(root, step),root)
+        signature_fields={'source':source,'inputs':stage_input_signature(inputs, step, native_paths, root),'upstream':upstream}
+        if step in [1,2,3]:
             signature_fields['controls']=hash_paths(sorted(p for p in (root/'ctl').glob('*') if p.is_file()),root)
+        if step in [4,5]:
+            signature_fields['native_backend']='interactive_native_session'
+            signature_fields['native_model']='gpt-6-luna'
+            signature_fields['native_checkpoint']=file_hash(Path(cfg.NATIVE_FUNCTION_CHECKPOINT)) if Path(cfg.NATIVE_FUNCTION_CHECKPOINT).is_file() else 'absent'
+            signature_fields['native_policy_note']=file_hash(Path(cfg.NATIVE_FUNCTION_POLICY_CLARIFICATION)) if Path(cfg.NATIVE_FUNCTION_POLICY_CLARIFICATION).is_file() else 'absent'
         if step==4:
             signature_fields['model']=cfg.CLOUD_MODEL_NAME
         if step==6:

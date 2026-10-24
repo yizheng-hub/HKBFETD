@@ -33,23 +33,35 @@ EXPORT_MAPPING = {
 PROVENANCE = ['BUILDINGCSUID','NUMABOVEGROUNDSTOREYS','TOPHEIGHT','BASEHEIGHT','Source_Footprint_Area_sqm','Geometry_Quality',
     'Footprint_Area_QA','Duplicate_Footprint_Geometry','Height_Source','Height_Quality','Height_Terrain_QA',
     'Floors_Source','Floors_Quality','Floors_Height_Proxy','Floor_Height_Proxy_Assumption_m',
-    'OSM_Height_m','OSM_Storeys','OSM_Storeys_Scope_QA','OSM_Dimension_Match_QA','OSM_Dimension_Object_ID','Terrain_Elevation_mPD',
+    'OSM_Height_m','OSM_Storeys','OSM_Storeys_Scope_QA','OSM_Dimension_Match_QA','OSM_Dimension_Object_ID',
+    'OSM_Dimension_Scope_QA','OSM_Dimension_Raw_Matched_Component_Count','OSM_Dimension_Candidate_Evidence','Terrain_Elevation_mPD',
     'Height_Reference','Ground_To_Top_Height_m','Ground_Height_Source','Ground_Height_Quality',
     'Height_Source_Comparison_QA','Component_Base_Above_Terrain_m',
+    'Dimension_Ratio_Scope_QA','Component_Vertical_Scope_QA',
     'CSDI_Base_Elevation_mPD','CSDI_Top_Elevation_mPD','CSDI_Reported_Storeys','CSDI_Basement_Storeys',
     'CSDI_Structure_Type','CSDI_Status','CSDI_Geometry_IoU','CSDI_Match_Quality',
     'CSDI_Native_Building_ID','CSDI_Record_Created_Date','CSDI_Record_Updated_Date',
+    'CSDI_Building_Name_EN','CSDI_Building_Name_TC','CSDI_Storeys_Scope_QA',
+    'CSDI_Component_Use_Type','CSDI_Name_Function_Evidence',
     'Reported_Attribute_Evidence','Floors_Document_Evidence_IDs',
     'Floors_Before_Document_Review','Floors_Source_Before_Document_Review',
+    'Floors_Source_Comparison_QA',
     'Documented_GFA_sqm','Documented_GFA_Evidence_IDs',
+    'Documented_Function_Evidence','Function_Before_Document_Review','ML_Subclass_Candidate',
+    'Height_Before_Document_Review',
+    'ML_Main_Class_Candidate',
+    'OSM_Function_Candidate_Main','OSM_Function_Candidate_Sub','OSM_Function_Evidence',
     'Structure_Use_Type','Structure_Use_Name','Structure_Use_Source','Structure_Use_Evidence','Structure_Use_Quality',
     'Energy_Assessment_Scope','Pre_Structure_Review_Main_Class','Pre_Structure_Review_Sub_Class',
     'Registered_GFA_sqm','Registered_GFA_Source','GFA_Proxy_sqm','GFA_Proxy_Method','GFA_Best_Available_sqm','GFA_Quality',
     'Permit_IDs','Permit_GFA_Scope','Permit_GFA_Usable','GFA_DOMESTIC_SUM','GFA_NONDOMESTIC_SUM',
+    'Permit_GFA_Link_QA','Permit_GFA_Physical_Scope_Verified','Permit_Raw_DOMESTICGFA','Permit_Raw_NONDOMESTICGFA',
     'Observed_Main_Area_Proportions','Observed_Residential_Area_Share','Observed_Nondomestic_Area_Share',
     'Proportion_Method','Proportion_Quality','Functional_Subclasses','Functional_Main_Classes',
     'Evidence_Subclass_Weights','Classification_QA','Function_Quality','ML_Decision_Status','ML_Subclass_Confidence','Subclass_Source',
-    'BDBIAR_Match_Quality','Geometry_Review_Status','LLM_Review_Status']
+    'BDBIAR_Match_Quality','BDBIAR_Source_Block_ID','BDBIAR_Source_Integrity_Status',
+    'BDBIAR_Source_Integrity_QA','BDBIAR_Source_Integrity_Evidence','BDBIAR_Source_Attributes_Usable',
+    'BDBIAR_AGE_CANDIDATE','BDBIAR_CLASS_CANDIDATE','Geometry_Review_Status','LLM_Review_Status']
 
 
 def validate_release(frame):
@@ -68,7 +80,14 @@ def validate_release(frame):
     assert height.dropna().between(0,600,inclusive='right').all()
     assert floors.dropna().between(1,150).all() and np.isclose(floors.dropna(),floors.dropna().round()).all()
     assert height[frame.Height_Quality.isin(['unknown','conflict_unresolved'])].isna().all()
+    low_height_scope = frame.Height_Source_Comparison_QA.fillna('').str.contains('height_storeys_component_scope_unresolved',regex=False)
+    assert height[low_height_scope].isna().all()
+    assert numbers(frame.loc[low_height_scope], 'Height_Before_Document_Review').gt(0).all()
     assert floors[frame.Floors_Quality.isin(['unknown','conflict_unresolved'])].isna().all()
+    unconfirmed_count = frame.Floors_Source.eq('CSDI_storeys_vertical_scope_unverified')
+    assert floors[unconfirmed_count].isna().all()
+    assert numbers(frame.loc[unconfirmed_count], 'GFA_Proxy_sqm').isna().all()
+    assert not frame.Floors_Source.eq('CSDI_reported_storeys').any(), 'Undefined CSDI count scope cannot supply primary aboveground storeys'
     proxy = numbers(frame,'Floors_Height_Proxy')
     assert np.isclose(proxy.dropna(),np.maximum(1,np.floor((height[proxy.notna()]/3).round(9)+.5))).all(), 'Optional height proxy disagrees with published height'
     assert frame.loc[height.notna(),'Height_Source'].isin(['CSDI_top_minus_component_base','LandsD_top_minus_base']).all()
@@ -113,6 +132,36 @@ def validate_release(frame):
     shared = frame.Permit_GFA_Scope.eq('shared_or_multiple_permits')
     assert numbers(frame.loc[shared],'GFA_DOMESTIC_SUM').isna().all()
     assert numbers(frame.loc[shared],'GFA_NONDOMESTIC_SUM').isna().all()
+    incompatible_permit = frame.Floors_Source.eq('component_storeys_scope_unresolved') & frame.Permit_GFA_Scope.isin(
+        ['single_structure', 'single_structure_component_scope_unresolved'])
+    assert frame.loc[incompatible_permit, 'Permit_GFA_Scope'].eq('single_structure_component_scope_unresolved').all()
+    permit_scope_unresolved = frame.Permit_GFA_Scope.isin(['single_structure_component_scope_unresolved',
+                                                       'single_structure_component_use_scope_unresolved'])
+    assert not frame.loc[permit_scope_unresolved,'Permit_GFA_Usable'].fillna(False).any()
+    assert not frame.loc[permit_scope_unresolved,'Registered_GFA_Source'].eq('single_structure_single_permit').any()
+    assert numbers(frame.loc[permit_scope_unresolved],'Observed_Residential_Area_Share').isna().all()
+    assert numbers(frame.loc[permit_scope_unresolved],'Observed_Nondomestic_Area_Share').isna().all()
+    assert not frame.loc[permit_scope_unresolved,'Calibrated_Source'].isin(['GFA_Mixed','GFA_Residential']).any()
+    # Administrative permit accounts are never measurements of current use.
+    assert numbers(frame,'Observed_Residential_Area_Share').isna().all()
+    assert numbers(frame,'Observed_Nondomestic_Area_Share').isna().all()
+    permit_adopted = frame.Permit_GFA_Usable.fillna(False).astype('string').str.lower().eq('true')
+    physically_verified = frame.Permit_GFA_Physical_Scope_Verified.astype('string').str.lower().eq('true').fillna(False)
+    assert not (permit_adopted & ~physically_verified).any()
+    bd_usable = frame.BDBIAR_Source_Attributes_Usable.astype('string').str.lower().eq('true').fillna(False)
+    assert frame.loc[~bd_usable,['BDBIAR_AGE','BDBIAR_CLASS']].isna().all().all()
+    registration_scope = numbers(frame,'GROSSFLOORAREA').gt(0) & (
+        frame.Floors_Source.eq('component_storeys_scope_unresolved') |
+        frame.Registered_GFA_Source.eq('LandsD_structure_GFA_component_scope_unresolved'))
+    assert numbers(frame.loc[registration_scope],'Registered_GFA_sqm').isna().all()
+    assert frame.loc[registration_scope,'Registered_GFA_Source'].eq('LandsD_structure_GFA_component_scope_unresolved').all()
+    registration_only = registration_scope & numbers(frame,'Documented_GFA_sqm').isna() & numbers(frame,'GFA_Proxy_sqm').isna()
+    assert numbers(frame.loc[registration_only],'GFA_Best_Available_sqm').isna().all()
+    assert frame.loc[registration_only,'GFA_Quality'].eq('registered_component_scope_unresolved').all()
+    named_station = frame.CSDI_Component_Use_Type.eq('substation') & ~frame.Energy_Assessment_Scope.eq('excluded_nonbuilding_structure')
+    assert frame.loc[named_station,'Calibrated_Main_Class'].eq('Commercial_商业类别').all()
+    assert frame.loc[named_station,'Calibrated_Sub_Class'].eq('Other Commercial_其他商业').all()
+    assert frame.loc[named_station,'CSDI_Name_Function_Evidence'].fillna('[]').ne('[]').all()
     assert frame.Calibrated_Main_Class.isin(MAIN_CLASSES+[MIXED,NONASSESSED,UNKNOWN]).all()
     invalid = []
     for _,row in frame.iterrows():
@@ -151,7 +200,7 @@ def generate_public_dataset(frame):
     public['Dataset_Version'] = '2.0'
     public['Unknown_Value_Policy'] = 'null_with_quality_and_source_flags'
     # A nearest point is useful linkage evidence, not a verified building attribute.
-    point_usable = public.BDBIAR_Match_Quality.eq('inside_unique')
+    point_usable = public.BDBIAR_Match_Quality.eq('inside_unique') & public.BDBIAR_Source_Attributes_Usable.astype('string').str.lower().eq('true').fillna(False)
     bdb_fields = [EXPORT_MAPPING['BDBIAR_CLASS'],EXPORT_MAPPING['BDBIAR_AGE']]
     withheld_point_attributes = public.loc[~point_usable,bdb_fields].notna().sum().to_dict()
     public.loc[~point_usable,bdb_fields] = np.nan
@@ -165,8 +214,15 @@ def generate_public_dataset(frame):
         'height_sources_conflict':public.Height_Quality.eq('conflict_unresolved'),
         'storeys_sources_conflict':public.Floors_Quality.eq('conflict_unresolved'),
         'component_storeys_scope_unresolved':public.Floors_Source.eq('component_storeys_scope_unresolved'),
+        'CSDI_reported_storeys_vertical_scope_unverified':public.Floors_Source.eq('CSDI_storeys_vertical_scope_unverified'),
+        'height_storeys_component_scope_unresolved':public.Height_Source_Comparison_QA.fillna('').str.contains('height_storeys_component_scope_unresolved',regex=False),
+        'registered_gfa_component_scope_unresolved':public.Registered_GFA_Source.eq('LandsD_structure_GFA_component_scope_unresolved'),
+        'BDBIAR_source_integrity_or_identity_unresolved':public.BDBIAR_Source_Integrity_Status.isin(
+            ['confirmed_source_internal_conflict','component_identity_unresolved']),
         'csdi_id_matched_but_component_geometry_changed':public.CSDI_Match_Quality.isin(['invalid_source_geometry','structure_type_mismatch','footprint_changed']),
-        'OSM_component_height_reference_difference':public.Height_Source_Comparison_QA.fillna('').ne(''),
+        'OSM_component_height_reference_difference':public.Height_Source_Comparison_QA.fillna('').str.contains('OSM_differs',regex=False),
+        'OSM_dimension_source_scope_unresolved':public.OSM_Dimension_Scope_QA.isin(['shared_component_scope','source_object_scope_unknown']),
+        'documented_height_reference_conflict':public.Height_Source_Comparison_QA.fillna('').str.contains('documented_height_reference_conflict',regex=False),
         'ground_height_sources_conflict':public.Ground_Height_Quality.eq('conflict_unresolved'),
         'top_minus_terrain_rejected':public.Height_Terrain_QA.fillna('').ne(''),
         'registered_vs_uniform_floorplate_factor_over_3':public.Registered_GFA_sqm.notna()&public.GFA_Proxy_sqm.notna()&
@@ -184,6 +240,7 @@ def generate_public_dataset(frame):
         'height_rounded_to_15m_records':int(height.round(1).eq(15).sum()),
         'primary_height_definition':'structure_base_to_top; ground height is separate',
         'csdi_match_quality_counts':public.CSDI_Match_Quality.value_counts().to_dict(),
+        'osm_dimension_scope_counts':public.OSM_Dimension_Scope_QA.value_counts(dropna=False).to_dict(),
         'ground_height_known_records':int(public.Ground_To_Top_Height_m.notna().sum()),
         'small_tall_identified_bridge_structures':int(resolved_bridge.sum()),
         'small_tall_unresolved_records':int((flags['small_footprint_tall_building'] & ~resolved_bridge).sum()),
@@ -350,16 +407,21 @@ def write_documentation(public,validation,comparison):
         'Height_m_建筑高度':'Structural component top minus base elevation; towers and podiums remain separate; not architectural spire height',
         'Height_Source':'CSDI matched component top-minus-base, native top-minus-base, missing or conflict',
         'Height_Reference':'structure_base_to_top for known primary heights; never a terrain/OSM substitute',
-        'Height_Quality':'Source-reported component elevations; not independent height measurements',
+        'Height_Quality':'Source-reported component elevations, with documentary or height/storeys component-scope conflicts withheld; not independent height measurements',
         'Ground_To_Top_Height_m':'Separate datum top minus point terrain estimate, otherwise comparable OSM reported ground height with unverified reference',
         'Ground_Height_Source':'CSDI/LandsD top minus point DTM, OSM reported height with reference unverified, missing or conflict',
-        'Ground_Height_Quality':'Point terrain estimate or reported reference unverified; never silently a component height',
+        'Ground_Height_Quality':'Point terrain estimate, reported reference unverified, or component/documentary scope unresolved estimate; never silently a component height',
         'Component_Base_Above_Terrain_m':'Component base elevation minus sampled terrain; raised podium bases and sampling errors both possible',
         'CSDI_Geometry_IoU':'Footprint intersection/union after reprojection; >=0.95 required for donation, local footprint retained',
         'CSDI_Match_Quality':'Exact unique BuildingCSUID, compatible structure type and valid footprint IoU >=0.95; otherwise attributes not used',
         'CSDI_Base_Elevation_mPD':'CSDI raw component base elevation in Hong Kong Principal Datum; may be a podium roof',
         'CSDI_Top_Elevation_mPD':'CSDI raw component top elevation in Hong Kong Principal Datum; spire/antenna conventions may differ',
-        'CSDI_Reported_Storeys':'Original source-reported storeys, including withheld conflicts; not inferred from height',
+        'CSDI_Reported_Storeys':'Raw CSDI reported count; retrieved official schema does not define aboveground/basement/mechanical-floor scope; not used alone as primary aboveground storeys',
+        'CSDI_Storeys_Scope_QA':'Whether an eligible CSDI count exists and agrees with an explicit aboveground source; agreement does not establish special-floor conventions',
+        'CSDI_Building_Name_EN':'Raw matched-ID CSDI English component name; check CSDI_Match_Quality and distinguish named ancillary facilities from parent buildings',
+        'CSDI_Building_Name_TC':'Raw matched-ID CSDI Chinese component name; original LandsD name is retained separately',
+        'CSDI_Component_Use_Type':'Explicit substation/transformer-station source-name clue from an Active component with matching ID/type/footprint; empty is not source-certified use',
+        'CSDI_Name_Function_Evidence':'JSON exact active component-name rule, geometry match and previous function decision; inferred function under the project taxonomy, never an official measured use field',
         'CSDI_Native_Building_ID':'BuildingID in the official CSDI snapshot; distinct from the local Building_ID_建筑ID',
         'CSDI_Record_Created_Date':'Official record creation date as YYYY-MM-DD; not construction completion date; raw dates remain in frozen source',
         'CSDI_Record_Updated_Date':'Official record timestamp as YYYY-MM-DD; not measurement or renovation date; raw dates remain in frozen source',
@@ -368,8 +430,19 @@ def write_documentation(public,validation,comparison):
         'Floors_Document_Evidence_IDs':'JSON IDs of explicitly scoped aboveground component storey documents selected for the primary count',
         'Floors_Before_Document_Review':'Count after ordinary source fusion and before documented component-count reconciliation',
         'Floors_Source_Before_Document_Review':'Floor source/conflict state before documented component-count reconciliation',
+        'Floors_Source_Comparison_QA':'Explicit unresolved same-component documentary storey-reference conflicts; primary storeys and their geometric GFA proxy withheld, raw source counts retained',
+        'Dimension_Ratio_Scope_QA':'Height/count outside2–8m is a review signal, not proof of either value being wrong. Existing extreme1–20 scope gate and explicit documentary scope withdrawals remain separate',
+        'Component_Vertical_Scope_QA':'Explicit unresolved component vertical-scope control where present; source-reported numeric candidates remain separately preserved',
         'Documented_GFA_sqm':'Positive owner/source-reported gross floor area with explicit same-component scope; distinct from a registered area',
         'Documented_GFA_Evidence_IDs':'JSON IDs of documents supporting the same-component gross floor area; lettable/saleable/office/internal areas do not qualify',
+        'Documented_Function_Evidence':'JSON reviewed primary-source component function facts; prior decisions and scope limitations retained separately',
+        'Function_Before_Document_Review':'JSON main/subclass, source and QA before source-documented function reconciliation',
+        'ML_Subclass_Candidate':'Unverified model suggestion, including withheld housing subtypes; not an adopted class or floor-area fraction',
+        'Height_Before_Document_Review':'Source-fused component height candidate before documentary review; retained when documentary or height/storeys component-scope conflict withholds the primary height; not an accepted fallback height',
+        'ML_Main_Class_Candidate':'Main-model argmax proposal; retained separately from the adopted source/documented class. High-confidence disagreement is a review trigger, not proof that the source is wrong',
+        'OSM_Function_Candidate_Main':'Function-bearing polygon candidate before excluding shared component scope; not necessarily adopted',
+        'OSM_Function_Candidate_Sub':'Polygon subclass candidate before component and source-conflict checks; not an observed use-area fraction',
+        'OSM_Function_Evidence':'JSON polygon object IDs, tags, inferred use, raw matched-component counts and overlap metrics. adoption_eligible refers only to component/geometry thresholds; source-use conflicts and documentary reconciliation apply separately',
         'Structure_Use_Type':'Explicitly matched structural use: bridge, equipment or water-storage structure; empty is not reviewed/identified',
         'Structure_Use_Name':'Documented landmark/component name; original LandsD name is not overwritten',
         'Structure_Use_Source':'Official document plus spatial identification, or comparable unique OSM polygon with explicit structural tags',
@@ -381,11 +454,11 @@ def write_documentation(public,validation,comparison):
         'Pre_Structure_Review_Sub_Class':'Subclass before explicit structural-use review, for traceability',
         'Floors_Height_Proxy':'Optional height/3 m estimate, nearest integer with half ties upward (ratio normalized to 9 decimals); excluded from reported storeys and GFA',
         'GFA_Proxy_sqm':'Geometric footprint times reported storeys; uniform floorplate assumption',
-        'Registered_GFA_sqm':'Positive structure registration, otherwise uniquely scoped single-structure permit total',
+        'Registered_GFA_sqm':'Positive reported structure registration without unresolved component scope, otherwise uniquely scoped single-structure permit total; raw registration remains separately available',
         'GFA_Best_Available_sqm':'Registered GFA preferred, then documented same-component GFA, then uniform-floorplate proxy; compare with coverage',
-        'Observed_Main_Area_Proportions':'Scoped registered domestic/nondomestic areas mapped to inferred main functions; commercial/industrial mapping is conditional on the function inference, not an independent sector-area measurement',
-        'Observed_Residential_Area_Share':'Scoped domestic GFA / (domestic + nondomestic GFA)',
-        'Observed_Nondomestic_Area_Share':'Scoped nondomestic GFA / (domestic + nondomestic GFA); not automatically commercial',
+        'Observed_Main_Area_Proportions':'Empty without independently scoped current-use area evidence; permit domestic/nondomestic accounts are not observations of current function',
+        'Observed_Residential_Area_Share':'Null in this revision: no independent component current-residential-area measurement is adopted',
+        'Observed_Nondomestic_Area_Share':'Null in this revision: permit nondomestic accounts are not observed current-use shares',
         'Evidence_Subclass_Weights':'Classification evidence weights; never measured floor-area fractions',
         'Proportion_Method':'single_function_assumption, registered_main_area_only, unknown or nonassessed label',
         'Functional_Subclasses':'JSON list of evidenced functional components, with no quantitative allocation',
@@ -400,23 +473,37 @@ def write_documentation(public,validation,comparison):
         'Footprint_Area_QA':'Whether original stored area differs from recomputed projected polygon area',
         'Duplicate_Footprint_Geometry':'Equal planar footprint geometry; distinct tower/podium components may legitimately coincide',
         'Height_Terrain_QA':'Rejected point-terrain difference; applies to the separate ground-height estimate',
-        'Height_Source_Comparison_QA':'OSM and component-height discrepancy; their reference planes may differ',
+        'Height_Source_Comparison_QA':'OSM/documentary reference differences or height_storeys_component_scope_unresolved; incompatible height/count scope withholds primary height and retains the candidate and raw elevations',
         'Floors_Quality':'Reported, missing, conflicting/scope unresolved, or not applicable to nonbuilding structure',
         'Floor_Height_Proxy_Assumption_m':'3 m assumed storey height, only where optional height-derived proxy exists',
         'OSM_Height_m':'Source-reported height parsed into metres from a comparable polygon; component reference unverified',
         'OSM_Storeys':'OSM building:levels report from a comparable polygon, including conflicting withheld values',
-        'OSM_Storeys_Scope_QA':'Whole-building OSM levels only donate to component storeys when component base is within 3 m of point terrain; other source reports remain separate',
+        'OSM_Storeys_Scope_QA':'OSM levels donate only when raw source-object geometry intersects one official component by more than 1 sqm and component base is within 3 m of point terrain; shared or unknown scope is withheld',
         'OSM_Dimension_Match_QA':'Polygon coverage/identity/conflicting-attribute checks for OSM dimension donation',
         'OSM_Dimension_Object_ID':'Source object and geometry identity used for the dimension match',
+        'OSM_Dimension_Scope_QA':'Raw source-object geometry scope across official components before dimension-match thresholds; shared or unknown scope remains candidate evidence only',
+        'OSM_Dimension_Raw_Matched_Component_Count':'Distinct official component count intersected by the OSM source object by more than 1 sqm, before dimension-match thresholds',
+        'OSM_Dimension_Candidate_Evidence':'JSON candidate records with source IDs, raw component count, source geometry overlap metrics and reported dimensions',
         'Terrain_Elevation_mPD':'Coordinate-checked single-point DTM elevation, not a surveyed building base',
-        'Registered_GFA_Source':'Structure registration or uniquely scoped single-structure permit; missing otherwise',
+        'Registered_GFA_Source':'Structure registration or uniquely scoped single-structure permit; LandsD_structure_GFA_component_scope_unresolved marks a withheld raw registration, not an adopted area',
         'GFA_Proxy_Method':'Uniform floorplate approximation or unknown/not applicable; no inferred height/3 storeys used',
-        'GFA_Quality':'Registered scope checked, documented component GFA, uniform-floorplate proxy, unknown or nonbuilding not applicable',
+        'GFA_Quality':'reported_structure_gfa_not_independently_validated, registered_scope_checked for eligible permit, documented_component_gfa, uniform_floorplate_proxy, registered_component_scope_unresolved, permit scope unresolved, unknown or not applicable; no label certifies physical area',
         'Permit_IDs':'JSON list of linked occupation permits; link multiplicity is retained',
-        'Permit_GFA_Scope':'single_structure or shared_or_multiple_permits; shared totals are not allocated to every structure',
-        'Permit_GFA_Usable':'True only for one structure/one permit with complete nonnegative positive-total GFA components',
-        'GFA_DOMESTIC_SUM':'Domestic GFA of one uniquely scoped permit; shared/multiple/incomplete values are null',
-        'GFA_NONDOMESTIC_SUM':'Nondomestic GFA of one uniquely scoped permit; nondomestic does not imply commercial function',
+        'Permit_GFA_Scope':'single_structure, single_structure_component_scope_unresolved, single_structure_component_use_scope_unresolved or shared_or_multiple_permits; one link alone does not settle contradictory vertical/use scope',
+        'Permit_GFA_Usable':'Requires explicit same-physical-component scope verification as well as eligible administrative link and complete area; a single link alone is insufficient',
+        'Permit_GFA_Physical_Scope_Verified':'False unless independent physical/vertical scope evidence explicitly establishes the component allocation; does not certify current measured use shares',
+        'Permit_GFA_Link_QA':'Administrative single versus shared/multiple permit linkage; uniqueness is not physical/phase/use correspondence',
+        'Permit_Raw_DOMESTICGFA':'Unaltered domestic permit account amount for an administratively single link; not measured current residential area',
+        'Permit_Raw_NONDOMESTICGFA':'Unaltered nondomestic permit account amount for an administratively single link; not measured current commercial area',
+        'GFA_DOMESTIC_SUM':'Reported domestic permit-account area for a single link; retained for audit, never used to infer current observed residential share',
+        'GFA_NONDOMESTIC_SUM':'Reported nondomestic permit-account area for a single link; retained for audit, never used as current observed use share',
+        'BDBIAR_Source_Block_ID':'Stable NSEARCH1_E Block ID from the frozen BDBIAR source; OBJECTID is snapshot-specific',
+        'BDBIAR_Source_Integrity_Status':'Explicit internal source conflict, component-identity uncertainty, snapshot-coordinate uncertainty or linkage-only state; these are distinct evidence roles',
+        'BDBIAR_Source_Integrity_QA':'Reason for withholding BD donations or recording a source uncertainty; no replacement coordinates or identities are guessed',
+        'BDBIAR_Source_Integrity_Evidence':'Audit locator in the bundled integrity registry; evidence is retained separately with the native review archive',
+        'BDBIAR_Source_Attributes_Usable':'Only inside_unique geometry plus absence of explicit source/identity quarantine permits BD age/class donation; true is not factual certification',
+        'BDBIAR_AGE_CANDIDATE':'Original BD-derived year candidate retained when age donation is withheld; not an adopted completion year',
+        'BDBIAR_CLASS_CANDIDATE':'Original BD classification candidate retained when donation is withheld; not current component use',
         'Proportion_Quality':'Observed main area, assumed single function, unknown, or nonassessed label; never model probability',
         'Functional_Main_Classes':'JSON list of evidenced main functional components; no quantitative area allocation',
         'Classification_QA':'Preserved function-source/registered-area/parent-subclass conflicts; empty means no configured flag',
@@ -425,7 +512,7 @@ def write_documentation(public,validation,comparison):
         'ML_Subclass_Confidence':'Maximum subclass model probability only where subclass inference was considered; not area share',
         'Subclass_Source':'Retained source evidence, v2 model inference, source-conflict withholding or missing; may differ from main-class source',
         'Geometry_Review_Status':'Geometry-review/cache state; function inheritance does not dissolve or delete original footprints',
-        'LLM_Review_Status':'Whether a matching v2 text checkpoint exists; old unverifiable outputs are historical evidence only',
+        'LLM_Review_Status':'Step 4 API/native checkpoint replay status; matching_native_checkpoint requires exact current input/geometry/policy guards and separate root adoption. Reviewed unknown, partial, low-confidence, rejected and stale responses are not adopted labels. Frozen native source packets and the separate review ledger retain evidence; default replay makes no model requests',
         'CSDI_Basement_Storeys':'Original CSDI basement count, separate from above-ground storeys and not added to proxy GFA',
         'CSDI_Structure_Type':'CSDI Tower, Podium, Open-sided Structure or Temporary Structure; not itself a functional class',
         'CSDI_Status':'Original status in the frozen public distribution; snapshot acquisition is not survey date',
@@ -479,30 +566,32 @@ def write_documentation(public,validation,comparison):
 有效高度：{comparison['new_height_known']:,}；有效报告层数：{comparison['new_floor_known']:,}。
 主高度空值（缺失/冲突）：{validation['unknown_height_records']:,}；主层数空值（缺失/冲突/不适用）：{validation['unknown_floor_records']:,}。
 
-Height_m 主列采用结构本体高度：同一结构的顶部高程减底部高程，塔楼与裙楼分别计算。不是地面至顶部或建筑学尖顶高度。
+Height_m 主列采用结构本体的源报顶底高程差，塔楼与裙楼分别计算。不是统一口径的地面至顶部或建筑学高度；原始顶部是否包含桅杆等构件不保证一致。
 CSDI Building 原始高程由地政总署 2026-10-20 官方批量快照补充，按唯一 BuildingCSUID、结构类型及有效足迹交并比 >=0.95 匹配；原有足迹不替换。
 本版保持原 2025-02-06 建筑清单以便逐栋对照，不声称覆盖快照中所有新增或变更的建筑；未匹配及几何变化另作标记。
 公开分发者生成的 height_m 不使用；所有主高度直接由原始 BaseHeight/TopHeight 重算。快照版本、下载链接、SHA256 见 data/sources 元数据。
 原表 T 泛指非裙楼结构，CSDI 进一步区分 Tower、Open-sided Structure、Temporary Structure；原表 P 仅匹配 Podium。
-Ground_To_Top_Height_m 单列保存地面至顶部估计，优先 CSDI 顶高减点 DTM，否则原始 LandsD 顶高减 DTM 或 OSM 报告高度。
+Ground_To_Top_Height_m 单列保存地面至顶部估计，优先 CSDI 顶高减点 DTM，否则原始 LandsD 顶高减 DTM 或通过原始来源对象单组件范围门控的 OSM 报告高度。
 点地形证据采于 2026-08-30；单点采样、时间变化、屋顶/建筑学高度及不同来源的参考面限制仍存在。它不作为结构本体高度的缺失替代。
 ICC 塔楼底部在裙楼上，因此结构本体高度与地面至顶部高度不同；中银大厦结构顶高也不能代表包含尖顶的建筑学总高。
 OSM_Height_m 原标签值保留，单位按 OSM 规则解析；与本体高度不同可能源自参考面不同，仅标记复核，不混算或平均。
 Floors_Count 使用通过源间冲突检查或明确组件文档调和后的报告层数；Floors_Height_Proxy 是单独的 3 m 层高假设，未当作报告层数或面积计算依据。
-逐栋文档中的塔楼、裙楼、整栋、附楼、楼层标签及不同面积口径分别记录在 Reported_Attribute_Evidence。中环广场75层、朗豪坊办公塔楼59层、泓富产业千禧广场32层有对应组件的文档证据，旧来源冲突值保留；并不把所有层都解释为已占用办公楼层。
-主层数与当前结构对应；OSM 整栋建筑层数可能包含裙楼，仅在结构底部与地形点相差不超过 3 m 时作为可比较候选，其余仅保留在 OSM_Storeys，不与官方结构层数混算。这个范围判断同样受地形采样误差限制。
+逐栋文档中的塔楼、裙楼、整栋、附楼、楼层标签及不同面积口径分别记录在 Reported_Attribute_Evidence。中环广场75层和泓富产业千禧广场32层保留对应组件文档；朗豪坊59个level含屋面层，撤回旧规范地上层数采纳及其面积代理，不猜57或46层。帝豪阁C座与Goodman Interlink的层数口径冲突同样保留原报告并撤不可靠主层数，不向邻近组件捐值。
+中环广场CSDI顶底差376.8m与业主374m（含桅杆）的参考范围未能统一，主高度留空；保留原高程、复核前高度及来源差异标记，不强行替换为374m。
+主层数与当前结构对应；OSM 整栋建筑层数可能包含裙楼，只有原始来源对象几何在阈值前仅与一个官方组件有超过 1 平方米交集，且结构底部与地形点相差不超过 3 m 时才作为可比较候选；共享或范围未知时仅保留 OSM 报值和候选证据。地形范围判断同样受采样误差限制。
 原始 NUMABOVEGROUNDSTOREYS、TOPHEIGHT、BASEHEIGHT 保留原值。
 空值表示无法可靠补齐；原因见 Height_Quality、Floors_Quality、Height_Source、Floors_Source。
 
-Registered_GFA_sqm 仅使用单体登记面积或范围通过检查的一栋建筑/一份许可证面积。
+Registered_GFA_sqm 仅使用没有已知组件范围冲突的来源报告登记面积，或有明确物理组件范围证据的许可面积；行政上的单结构单许可证不构成物理范围认证，报告值不表示已独立实测认证。
+组件层数范围未解时，原始 LandsD_Registered_GFA 保留，但撤回派生登记面积采纳并标 registered_component_scope_unresolved；单独补层数不能重新认证面积。独立文档组件GFA仍按自身来源保留。
 共享/多份许可证的面积不擅自分摊；Permit_Group 等组级证据保存在阶段数据。
 GFA_Proxy_sqm 使用几何面积×报告层数，假设每层同样大小；GFA_Best_Available_sqm 优先登记面积，其次明确组件范围的文档GFA，再次代理面积。文档GFA不冒充注册面积；可出租、可售、单位内部面积不当作GFA。
 比较总量必须同时报告覆盖率；未知值增加不是香港实体建筑面积减少。
 
 UBEM_Mixed_Proportions 不再混入 POI 数量或模型概率；单功能的 1.0 是明确标记的 single_function_assumption。
-混合建筑无可靠子类面积时比例为空；Observed_Main_Area_Proportions 仅记录范围明确的住宅/非住宅面积证据。
+混合建筑无可靠子类面积时比例为空；本轮没有采纳独立组件当前用途面积实测证据，Observed_Main_Area_Proportions 及两个 Observed_*_Area_Share 留空。
 Functional_Subclasses 与 Evidence_Subclass_Weights 只表示功能及分类证据，不是实测面积份额。
-Observed_Main_Area_Proportions 的住宅/非住宅面积来自登记，但把非住宅映射为商业或工业仍以推断用途为条件；不能把这一步映射当作独立实测的商业/工业面积。直接登记份额见 Observed_Residential_Area_Share 与 Observed_Nondomestic_Area_Share。
+许可DOMESTIC/NONDOMESTIC原账目保留作溯源，不再映射为当前用途实测份额、不据此强制Mixed-use；用途推断和单功能1.0假定有独立的来源及质量字段。
 法定图则中源标签字面值 NULL 规范化为真正空值，其 Nullah 描述仍保留；原始字面值保存在冻结区划输入中，不生成名为 NULL 的用途类别。
 法律管辖类别“合法私人建筑”、政府产权、OSM building=yes 不再直接决定功能。
 小于 5 m² 且缺少其他资料，不再足以把足迹判为噪声。
@@ -510,7 +599,7 @@ Observed_Main_Area_Proportions 的住宅/非住宅面积来自登记，但把非
 高度超过 100 m、占地小于 150 m² 而又无占用楼宇功能证据的未知结构，不允许仅靠模型补成楼宇用途；原始高程及结构高度仍保留，不凭细长形状判成确定的非建筑。
 源基础设施筛查不会把所有 tower 标签当作非建筑，宗教/观景塔及泵站不因此自动排除。结构用途来源与空间识别证据逐条记录。
 屋宇署“住宅/综合用途”组合标签不再被当成确定的纯住宅；政府建筑与房委会裙楼需具体功能证据。
-屋宇署点位只有唯一落在当前足迹内时，其分类及楼龄年份才进入公开建筑属性；最近点、共享点等匹配不转移这些属性，原点位资料保留在阶段数据，点位编号与距离继续保留作追溯。
+屋宇署点位只有唯一落在当前足迹内且未命中明确源内冲突或组件身份隔离时，其分类及楼龄年份才可能进入公开属性；inside_unique本身不是事实认证。稳定Block ID、原匹配质量、隔离候选值与证据路径保留，快照坐标变化单独标记，不自动采新点或猜坐标；独立地政署许可外键链不被另一坏屋宇署点自动否定。
 功能来源冲突不再自动变成混合用途；未能判定时保留未知并标记。
 
 分类模型使用几何、分区和来源明确的物理特征；缺失值只在训练分区拟合插补器，不回写公开物理字段。

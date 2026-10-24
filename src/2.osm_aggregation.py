@@ -34,7 +34,7 @@ try:
 except ImportError:
     fuzz = None
 
-from utils import (to_simplified_chinese, safe_str)
+from utils import (to_simplified_chinese, safe_str, classify_text_by_keywords, init_keyword_tool)
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -549,36 +549,15 @@ def load_input_data():
 
 def preprocess_osm(gdf_osm_buildings, gdf_osm_pois, gdf_official_library):
     
-    try:
-        from config import KEYWORDS_FILE
-        with open(KEYWORDS_FILE, 'r', encoding='utf-8') as f:
-            KEYWORDS_CONFIG = json.load(f)
-    except Exception as e:
-            raise IOError(f"Failed to load keywords file '{KEYWORDS_FILE}': {e}")
-    
-    KEYWORD_MAP = {}
-    
-    for main, subs in KEYWORDS_CONFIG.items():
-        if not isinstance(subs, dict):
-            continue
-            
-        for sub, kws in subs.items():
-            for kw in kws:
-                if kw_sl := to_simplified_chinese(kw).lower().strip():
-                    KEYWORD_MAP[kw_sl] = (main, sub)
-    
-    all_kws_list = sorted([re.escape(k) for k in KEYWORD_MAP.keys() if len(k) > 1], key=len, reverse=True)
-    KEYWORD_REGEX = re.compile('|'.join(all_kws_list)) if all_kws_list else None
-    
+    keyword_tool = init_keyword_tool(KEYWORDS_FILE)
+    KEYWORD_MAP = keyword_tool['keyword_map']
+    KEYWORD_REGEX = keyword_tool['keyword_regex']
+
     def classify_text_for_osm(text):
         if not text or pd.isna(text) or not KEYWORD_REGEX:
             return [], []
-        matches = KEYWORD_REGEX.findall(to_simplified_chinese(text).lower().strip())
-        if matches:
-            ordered = list(dict.fromkeys(matches))
-            return ordered, list(dict.fromkeys(KEYWORD_MAP[kw] for kw in ordered))
-        return [], []
-    
+        return classify_text_by_keywords(text, KEYWORD_REGEX, KEYWORD_MAP)
+
     def classify_osm_feature_for_join(row):
         text_parts = []
         for col in ['building:use', 'building', 'office', 'shop', 'amenity', 'name']:
@@ -835,11 +814,38 @@ def spatial_aggregation(gdf_official_library, gdf_osm_clean):
     if file_hash(CSDI_BUILDINGS_PATH) != csdi_metadata['sha256']:
         raise ValueError('Frozen CSDI source checksum mismatch')
     csdi = gpd.read_parquet(CSDI_BUILDINGS_PATH)
-    attributes = fuse_dimensions(gdf_official_library, gdf_aggregated, terrain, csdi)
     evidence = pd.read_csv(DOCUMENTED_ATTRIBUTES_PATH, dtype=str, keep_default_na=False)
+    parking_scope_rows = evidence.loc[
+        evidence.scope.eq("Reported parking machine layers are not established occupied building storeys")
+        & evidence.adoption.eq("unresolved_component_storey_reference_conflict")
+        & evidence.attribute.eq("reported_storeys")
+        & evidence.unit.eq("storeys")
+    ]
+    if parking_scope_rows.building_id.duplicated().any():
+        raise ValueError("Mechanized-parking scope review evidence must contain unique local ID/CSUID rows")
+    introduced_vertical_scope_qa = "Component_Vertical_Scope_QA" not in gdf_official_library.columns
+    dimensions_input = gdf_official_library.copy()
+    if introduced_vertical_scope_qa:
+        dimensions_input["Component_Vertical_Scope_QA"] = ""
+    else:
+        dimensions_input["Component_Vertical_Scope_QA"] = dimensions_input["Component_Vertical_Scope_QA"].fillna("").astype(str)
+    for review in parking_scope_rows.itertuples(index=False):
+        building_id, csuid = str(review.building_id), str(review.csuid)
+        match = (dimensions_input.BUILDINGSTRUCTUREID.astype(str).eq(building_id)
+                 & dimensions_input.BUILDINGCSUID.astype(str).eq(csuid))
+        if int(match.sum()) != 1:
+            raise ValueError(f"Expected one exact vertical-scope component for {building_id}/{csuid}")
+        existing = dimensions_input.loc[match, "Component_Vertical_Scope_QA"].iloc[0].strip().lower()
+        if existing and existing not in {"unresolved", "scope_unresolved", "component_vertical_scope_unresolved"}:
+            raise ValueError(f"Conflicting pre-existing component vertical-scope QA for {building_id}/{csuid}")
+        dimensions_input.loc[match, "Component_Vertical_Scope_QA"] = "component_vertical_scope_unresolved"
+    attributes = fuse_dimensions(dimensions_input, gdf_aggregated, terrain, csdi)
+    if introduced_vertical_scope_qa:
+        attributes = attributes.drop(columns=["Component_Vertical_Scope_QA"], errors="ignore")
     attributes = apply_documented_attributes(attributes, evidence)
-    additional = [c for c in attributes if c not in gdf_official_library.columns]
-    gdf_aggregated = gdf_aggregated.merge(
+    updated = ['Permit_GFA_Scope', 'Permit_GFA_Usable']
+    additional = [c for c in attributes if c not in gdf_official_library.columns or c in updated]
+    gdf_aggregated = gdf_aggregated.drop(columns=updated, errors='ignore').merge(
         attributes[['BUILDINGSTRUCTUREID'] + additional], on='BUILDINGSTRUCTUREID',
         how='left', validate='many_to_one')
     gdf_aggregated.to_file(AGGREGATED_GDF_PATH, driver='GeoJSON', AUTODETECT_JSON_STRINGS='NO')

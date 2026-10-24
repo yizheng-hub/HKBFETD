@@ -14,7 +14,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.pipeline import Pipeline
-from classification import (MAIN_CLASSES, UNKNOWN, MIXED, NONASSESSED, taxonomy,
+from classification import (MAIN_CLASSES, RESIDENTIAL, UNKNOWN, MIXED, NONASSESSED, taxonomy,
                             sub_label, finalize_function_fields)
 from config import (FEATURE_X_ALL_PATH, FEATURE_TRAINING_DATA_ML_PATH, FEATURE_BASE_INDEXED_PATH,
     ML_MODELS_PATH, ML_FINAL_OUTPUT_PATH, OUTPUT_DIR)
@@ -160,6 +160,12 @@ def train_models(X,training):
                 valid_children, child_acceptance = validation_acceptance(check.predict_proba(X.reindex(holding)),
                     targets.reindex(holding),check.named_steps['classifier'].classes_,SUB_CONFIDENCE)
                 validated_subclasses[parent] = valid_children
+                if parent == RESIDENTIAL:
+                    validated_subclasses[parent] = []
+                    details['publication_policy'] = 'Housing subtype requires documentary evidence; morphology does not establish tenure'
+                    for decision in child_acceptance.values():
+                        decision['passed_source_label_gate'] = decision['eligible_for_model_inference']
+                        decision['eligible_for_model_inference'] = False
                 details['deployment_subclass_gate'] = child_acceptance
             subclass_models[parent] = subclass_estimator().fit(X.reindex(targets.index),targets)
             details['status'] = 'trained_function_classifier_not_area_regressor'
@@ -182,6 +188,7 @@ def apply_ml_calibration(base,X,package):
     classes = package['main'].named_steps['classifier'].classes_
     prediction = classes[probability.argmax(axis=1)]
     confidence = probability.max(axis=1)
+    result['ML_Main_Class_Candidate'] = prediction
     for i,parent in enumerate(classes):
         result['proba_'+parent] = probability[:,i]
     result['ML_Confidence'] = confidence
@@ -221,8 +228,10 @@ def apply_ml_calibration(base,X,package):
     result.loc[unknown & slender_unverified & ~conflict,'ML_Decision_Status'] = 'slender_structure_function_unverified_unknown'
     result.loc[unknown & slender_unverified & ~conflict,'Calibrated_Notes'] = 'Small tall structure lacks occupied-building function evidence; model-only function withheld, source dimensions retained'
     result['ML_Subclass_Confidence'] = np.nan
+    result['ML_Subclass_Candidate'] = UNKNOWN
     for parent,model in package['subclasses'].items():
         needs_sub = result.Calibrated_Main_Class.eq(parent) & result.Calibrated_Sub_Class.eq(UNKNOWN) & ~conflict
+        needs_sub &= ~result.Calibrated_Source.eq('Documented_component_function')
         if not needs_sub.any():
             continue
         probs = model.predict_proba(X.loc[needs_sub])
@@ -230,8 +239,13 @@ def apply_ml_calibration(base,X,package):
         child_conf = probs.max(axis=1)
         result.loc[needs_sub,'ML_Subclass_Confidence'] = child_conf
         child_prediction = child_classes[probs.argmax(axis=1)]
+        result.loc[needs_sub,'ML_Subclass_Candidate'] = child_prediction
         eligible = (child_conf >= SUB_CONFIDENCE) & np.isin(child_prediction,
             package.get('validated_subclasses',{}).get(parent,child_classes))
+        if parent == RESIDENTIAL:
+            eligible[:] = False
+            result.loc[needs_sub,'Subclass_Source'] = 'housing_subtype_requires_documentary_evidence'
+            result.loc[needs_sub,'Calibrated_Notes'] += '; housing subtype candidate retained separately; tenure requires a documentary source'
         selected = result.index[needs_sub][eligible]
         result.loc[selected,'Calibrated_Sub_Class'] = child_prediction[eligible]
         result.loc[selected,'Subclass_Source'] = 'Machine_Learning_v2'
@@ -252,8 +266,15 @@ def apply_ml_calibration(base,X,package):
         result.loc[new_conflict,'Calibrated_Notes'] = 'Model function conflicts with scoped registered use area; function and subclass withheld'
         corrected = finalize_function_fields(result.loc[new_conflict].copy(),'Calibrated_Main_Class','Calibrated_Sub_Class')
         result.loc[new_conflict,corrected.columns] = corrected
-    result['Function_Quality'] = np.where(result.Calibrated_Source.eq('Machine_Learning_v2'),'model_inferred',
+    result['Function_Quality'] = np.where(result.Calibrated_Source.str.startswith(
+        ('Machine_Learning', 'LLM_', 'Inherited_context_matched_VLM'), na=False),'model_inferred',
         np.where(result.Calibrated_Main_Class.eq(UNKNOWN),'unknown','source_inferred'))
+    disagreement = (result.Calibrated_Main_Class.isin(MAIN_CLASSES) &
+        result.Calibrated_Main_Class.ne(result.ML_Main_Class_Candidate) & result.ML_Confidence.ge(MAIN_CONFIDENCE))
+    for index in result.index[disagreement]:
+        prior = result.at[index,'Classification_QA']
+        flags = str(prior).split(';') if pd.notna(prior) and prior else []
+        result.at[index,'Classification_QA'] = ';'.join(sorted(set(flags+['source_model_main_disagreement_review_only'])))
     result['Calibrated_Mix_Proportion'] = result.Sub_Class_Proportions
     require_unique(result)
     assert set(result[ID]) == set(base[ID])

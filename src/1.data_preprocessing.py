@@ -489,6 +489,9 @@ def build_official_library(dfs_landsd, gdf_bdbiar, use_address_similarity=False)
         for old_col, new_col in column_renames.items():
             if old_col in gdf_official_library.columns:
                 gdf_official_library.rename(columns={old_col: new_col}, inplace=True)
+
+        if 'NSEARCH1_E' in gdf_official_library.columns:
+            gdf_official_library.rename(columns={'NSEARCH1_E': 'BDBIAR_Source_Block_ID'}, inplace=True)
         
         if 'BDBIAR_NSEARCH3_C' in gdf_official_library.columns:
             gdf_official_library['BDBIAR_AGE'] = pd.to_datetime(
@@ -509,6 +512,13 @@ def build_official_library(dfs_landsd, gdf_bdbiar, use_address_similarity=False)
             
             if improved_matches is not None:
                 pass
+
+    if not gdf_bdbiar.empty:
+        from bdbiar_integrity import load_bdbiar_integrity_registry, apply_bdbiar_integrity_guard
+        integrity_registry = load_bdbiar_integrity_registry(
+            os.path.join(CTL_DIR, 'bdbiar_source_integrity.csv')
+        )
+        gdf_official_library = apply_bdbiar_integrity_guard(gdf_official_library, integrity_registry)
 
     
     display_cols = ['BUILDINGSTRUCTUREID', 'BUILDINGNAMETC', 'GFA_DOMESTIC_SUM', 'BDBIAR_CLASS', 'BDBIAR_AGE']

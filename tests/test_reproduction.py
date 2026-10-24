@@ -88,7 +88,7 @@ class ReproductionTests(unittest.TestCase):
                     patch.object(stage.pyogrio,'read_dataframe',return_value=geometry), \
                     patch.object(stage,'generate_candidates',return_value=candidates), \
                     patch.object(stage,'read_cache',return_value=cache),patch.object(stage,'save_cache'), \
-                    patch.object(stage,'request_decision') as request,patch.object(stage,'generate_images') as images:
+                    patch.object(stage,'request_decision') as request,patch.object(stage,'render_pair_images') as images:
                 stage.main()
                 self.assertEqual(pd.read_csv(paths['FINAL_SUGGESTIONS_PATH']).Cache_Status.iloc[0],'matching_checkpoint')
                 plain.write_bytes(b'changed surviving image')
