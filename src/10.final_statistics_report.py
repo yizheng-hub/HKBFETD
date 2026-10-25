@@ -12,6 +12,7 @@ from config import (ML_FINAL_OUTPUT_PATH, PUBLIC_DATASET_CSV_PATH, PUBLIC_DATASE
 from data_quality import ID, ids, numbers, require_unique
 from stage_io import read_table, attach_geometry
 from utils import sanitize_dataframe_for_geojson
+import pyogrio
 
 EXPORT_MAPPING = {
     ID:'Building_ID_建筑ID','SHAPE_Area':'Footprint_Area_sqm_占地面积',
@@ -191,6 +192,19 @@ def validate_release(frame):
         'floor_quality_counts':frame.Floors_Quality.value_counts().to_dict()}
 
 
+def write_public_geojson(geometry, path):
+    """Publish RFC 7946 longitude/latitude; retain metric geometry in Parquet."""
+    rounding = pyogrio.get_gdal_config_option('OGR_WKT_ROUND')
+    # GDAL's smart truncation can snap 113.999999901 to 114.0 despite precision=9.
+    pyogrio.set_gdal_config_options({'OGR_WKT_ROUND': 'NO'})
+    try:
+        sanitize_dataframe_for_geojson(geometry.to_crs(4326)).to_file(
+            path, driver='GeoJSON', RFC7946='YES', COORDINATE_PRECISION=9,
+            AUTODETECT_JSON_STRINGS='NO')
+    finally:
+        pyogrio.set_gdal_config_options({'OGR_WKT_ROUND': rounding})
+
+
 def generate_public_dataset(frame):
     columns = [c for c in list(EXPORT_MAPPING)+PROVENANCE if c in frame]
     public = frame[columns].rename(columns=EXPORT_MAPPING).copy()
@@ -249,7 +263,7 @@ def generate_public_dataset(frame):
     (Path(OUTPUT_DIR)/'dimension_qa_summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     public.drop(columns='geometry',errors='ignore').to_csv(PUBLIC_DATASET_CSV_PATH,index=False,encoding='utf-8-sig')
     geometry = gpd.GeoDataFrame(public,geometry=frame.geometry,crs=frame.crs)
-    sanitize_dataframe_for_geojson(geometry).to_file(PUBLIC_DATASET_GEOJSON_PATH,driver='GeoJSON',AUTODETECT_JSON_STRINGS='NO')
+    write_public_geojson(geometry, PUBLIC_DATASET_GEOJSON_PATH)
     geometry.to_parquet(Path(PUBLIC_DATASET_CSV_PATH).with_suffix('.parquet'),index=False)
     return public
 
@@ -576,7 +590,7 @@ Ground_To_Top_Height_m 单列保存地面至顶部估计，优先 CSDI 顶高减
 ICC 塔楼底部在裙楼上，因此结构本体高度与地面至顶部高度不同；中银大厦结构顶高也不能代表包含尖顶的建筑学总高。
 OSM_Height_m 原标签值保留，单位按 OSM 规则解析；与本体高度不同可能源自参考面不同，仅标记复核，不混算或平均。
 Floors_Count 使用通过源间冲突检查或明确组件文档调和后的报告层数；Floors_Height_Proxy 是单独的 3 m 层高假设，未当作报告层数或面积计算依据。
-逐栋文档中的塔楼、裙楼、整栋、附楼、楼层标签及不同面积口径分别记录在 Reported_Attribute_Evidence。中环广场75层和泓富产业千禧广场32层保留对应组件文档；朗豪坊59个level含屋面层，撤回旧规范地上层数采纳及其面积代理，不猜57或46层。帝豪阁C座与Goodman Interlink的层数口径冲突同样保留原报告并撤不可靠主层数，不向邻近组件捐值。
+逐栋文档中的塔楼、裙楼、整栋、附楼、楼层标签及不同面积口径分别记录在 Reported_Attribute_Evidence。中环广场75层保留对应组件文档；泓富产业千禧广场32层与原始25层尚无可靠实体层对应，主层数及依赖面积代理留空，办公用途保留。朗豪坊59个level含屋面层，撤回旧规范地上层数采纳及其面积代理，不猜57或46层。帝豪阁C座与Goodman Interlink的层数口径冲突同样保留原报告并撤不可靠主层数，不向邻近组件捐值。
 中环广场CSDI顶底差376.8m与业主374m（含桅杆）的参考范围未能统一，主高度留空；保留原高程、复核前高度及来源差异标记，不强行替换为374m。
 主层数与当前结构对应；OSM 整栋建筑层数可能包含裙楼，只有原始来源对象几何在阈值前仅与一个官方组件有超过 1 平方米交集，且结构底部与地形点相差不超过 3 m 时才作为可比较候选；共享或范围未知时仅保留 OSM 报值和候选证据。地形范围判断同样受采样误差限制。
 原始 NUMABOVEGROUNDSTOREYS、TOPHEIGHT、BASEHEIGHT 保留原值。
@@ -611,6 +625,7 @@ Functional_Subclasses 与 Evidence_Subclass_Weights 只表示功能及分类证�
 主类置信门槛先在外层训练分区内另切空间组校准：在 0.70/0.80/0.90/0.95/0.99 中选择达到至少 30 条、来源标签精确率至少 0.90 的最低门槛；无法达标的主类禁用自动补齐。校准不使用外层留出标签，具体分区和每类门槛随结果保存。
 此门槛使用留出结果筛选可发布类别，不把同一结果冒充筛选后独立测试精度；不达标的预测不回退到另一类别，直接保留未知。
 用途来源存在尚未解决的冲突时，模型置信度再高也不补成确定主类/子类；模型概率仍保留供检查。
+组件高度与整楼报数已标记低高度/高层数范围未决时，不仅凭模型补齐该组件主用途或细子类；候选和概率保留，已有可靠来源用途保留。同名主塔用途不向低矮附属组件自动继承。
 
 多模态与 LLM 原有结果完整保留为历史证据。旧缓存缺少输入/提示词/图像指纹，未冒充 v2 新验证结果。
 默认重现不调用 API，不下载新影像；待核验任务见中间目录和 unresolved_building_review_queue.csv。
@@ -627,7 +642,8 @@ OSM 尺寸匹配要求双方覆盖至少 60%、交并比至少 50%；共享对�
 dimension_qa_summary.json 汇总这些复核条件及新版 15 m 数量；Physical_Review_Flags 保留逐栋原因。
 独立验证模板包括已标记和未标记建筑，尚待人工与外部资料核实；本轮没有伪造独立真值。
 
-坐标：EPSG:2326，平面单位米；GeoJSON 带此坐标系声明。推荐支持该 CRS 的 GeoParquet。
+GeoParquet 坐标：EPSG:2326，平面单位米；几何面积及全部高度、面积属性仍分别使用米和平方米。
+GeoJSON 按 RFC 7946 导出为 WGS84 经度、纬度（EPSG:4326），坐标保留9位小数；不包含旧式 crs 成员。重投影只改变几何坐标表达，不改变建筑属性。面积计算请使用 GeoParquet 的米制几何，不要直接以经纬度计算平方米。
 数据源参考：https://data.gov.hk/en-data/dataset/hk-landsd-openmap-landsd-building
 高程基准：https://www.geodetic.gov.hk/common/data/pdf/explanatorynotes_c.pdf
 OSM 标签定义：https://wiki.openstreetmap.org/wiki/Key:height

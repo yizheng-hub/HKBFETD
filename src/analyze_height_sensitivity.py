@@ -32,7 +32,8 @@ published=pd.read_parquet(out/'HKBFETD_v2.parquet',columns=['Building_ID_建筑I
 assert np.allclose(actual,published[[probability_fields[c] for c in classes]].to_numpy(),atol=1e-10)
 changed=actual.argmax(axis=1)!=legacy.argmax(axis=1)
 conflict=base.Classification_QA.fillna('').str.contains('function_evidence_conflict|subclass_parent_conflict|registered_area_function_conflict',regex=True)
-eligible=base.Final_Main_Class.eq(UNKNOWN)&~conflict
+component_scope_unresolved=base.Dimension_Ratio_Scope_QA.fillna('').eq('low_height_to_count_scope_review')
+eligible=base.Final_Main_Class.eq(UNKNOWN)&~conflict&~component_scope_unresolved
 actual_fill=actual.max(axis=1)>=np.array([package['main_thresholds'][label] for label in classes[actual.argmax(axis=1)]])
 legacy_fill=legacy.max(axis=1)>=np.array([package['main_thresholds'][label] for label in classes[legacy.argmax(axis=1)]])
 actual_fill &= np.isin(classes[actual.argmax(axis=1)],package['validated_main_classes'])

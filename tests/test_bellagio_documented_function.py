@@ -15,13 +15,34 @@ spec.loader.exec_module(rules)
 
 
 class BellagioDocumentedFunctionTests(unittest.TestCase):
+    def test_documented_podium_use_requires_its_own_matching_component_scope(self):
+        facts=pd.DataFrame([dict(evidence_id='podium-use',building_id='1',csuid='podium-1',
+            main_class='Commercial_商业类别',sub_class=UNKNOWN,component_scope='podium_component',
+            source_url='https://example.org/owner',source_accessed='opened_this_pass',
+            identity_basis='Exact podium component',scope_limit='Commercial use only; no floor count or area',
+            source_scope_description='Mixed commercial programs; subtype unresolved',supporting_source_urls='[]')])
+        frame=pd.DataFrame([dict(BUILDINGSTRUCTUREID='1',BUILDINGCSUID='podium-1',
+            Final_Main_Class=UNKNOWN,Final_Sub_Class=UNKNOWN,Classification_Source='Unknown',
+            Classification_QA='',Is_Conflicted=False,CSDI_Match_Quality='same_component_id_type_footprint',
+            CSDI_Structure_Type='Podium',Estimated_Height=113.,Estimated_Floors=float('nan'),
+            GFA_Best_Available_sqm=float('nan'),Evidence_Subclass_Weights='')])
+        result=rules.apply_documented_functions(frame,facts)
+        self.assertEqual(result.Final_Main_Class.iloc[0],'Commercial_商业类别')
+        self.assertEqual(result.Final_Sub_Class.iloc[0],UNKNOWN)
+        self.assertTrue(pd.isna(result.Estimated_Floors.iloc[0]))
+        self.assertTrue(pd.isna(result.GFA_Best_Available_sqm.iloc[0]))
+        wrong=frame.copy();wrong['CSDI_Structure_Type']='Tower'
+        with self.assertRaisesRegex(ValueError,'component'):
+            rules.apply_documented_functions(wrong,facts)
+
     def test_every_control_can_be_applied_without_inventing_physical_attributes(self):
         facts=pd.read_csv(ROOT/'ctl/building_function_evidence.csv',dtype=str,keep_default_na=False)
         frame=pd.DataFrame([{
             'BUILDINGSTRUCTUREID':fact.building_id,'BUILDINGCSUID':fact.csuid,
             'Final_Main_Class':UNKNOWN,'Final_Sub_Class':UNKNOWN,
             'Classification_Source':'Unknown','Classification_QA':'','Is_Conflicted':False,
-            'CSDI_Match_Quality':'same_component_id_type_footprint','CSDI_Structure_Type':'Tower',
+            'CSDI_Match_Quality':'same_component_id_type_footprint',
+            'CSDI_Structure_Type':{'tower_component':'Tower','podium_component':'Podium'}[fact.component_scope],
             'Estimated_Height':float('nan'),'Estimated_Floors':float('nan'),
             'GFA_Best_Available_sqm':float('nan'),'Evidence_Subclass_Weights':'',
         } for fact in facts.itertuples()])

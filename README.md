@@ -34,6 +34,12 @@ The v2 repair preserves the original `output/` and `intermediate_files/` release
 New files go into `output/v2/`, `intermediate_files/v2/` and `log/v2/`.
 This repository contains the SD building classification project only.
 
+The public GeoJSON uses RFC 7946 WGS84 longitude/latitude (EPSG:4326),
+with nine decimal places and no legacy `crs` member. GeoParquet retains
+EPSG:2326 metric geometry. Attributes and identifiers agree across CSV,
+GeoJSON and GeoParquet; areas remain in square metres and heights in metres.
+Use projected geometry for area calculations.
+
 Activate `HKbuilding`, restore the frozen inputs listed below, then run:
 
 ```powershell
@@ -196,6 +202,9 @@ The release's independent code/data review checks consistency and implementation
 it does not replace independent field observations of building function.
 Source conflicts remain unknown even when a model probability exceeds its
 threshold. A tiny footprint without other evidence is not automatically noise.
+Records marked `low_height_to_count_scope_review` retain unresolved component
+vertical scope. The model keeps its candidates and probabilities but does not
+fill missing component functions or subclasses; supported source functions remain.
 Model-filled main/subclasses additionally require at least 30 confidence-qualified
 spatial-holdout predictions and precision >=0.80 against source labels. Classes
 failing this deployment gate remain unknown. The holdout is used for this gate;
@@ -314,6 +323,10 @@ evidence. Housing subtypes are not model-filled from morphology: unverified
 suggestions remain in `ML_Subclass_Candidate`. Reviewed documentary functions
 retain their prior decisions and source scope. Unknown documented subclasses
 are not overwritten by model suggestions.
+Documented functions require an exact ID/CSUID match and the declared tower or
+podium component type. A source for one component cannot be applied to the
+other. Documentary warehouse-block GFA is kept separate from parking-podium
+and whole-property totals and from the uniform-floorplate proxy.
 
 Native session review continues with `src/native_review_progress.py`. Its local
 state is kept in `output/native_review_progress/`; exported batches remain

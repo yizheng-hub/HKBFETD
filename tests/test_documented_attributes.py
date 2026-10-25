@@ -30,6 +30,19 @@ def facts(**changes):
 
 
 class DocumentedAttributesTests(unittest.TestCase):
+    def test_podium_count_conflict_withholds_only_adopted_count_and_dependent_proxy(self):
+        frame=component()
+        frame['CSDI_Structure_Type']='Podium'
+        frame['Estimated_Floors']=12.
+        frame['CSDI_Reported_Storeys']=12.
+        row=apply_documented_attributes(frame,facts(value='24',scope='whole building; component split unresolved',
+            adoption='unresolved_component_storey_reference_conflict')).iloc[0]
+        self.assertTrue(pd.isna(row.Estimated_Floors))
+        self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+        self.assertEqual(row.CSDI_Reported_Storeys,12.)
+        self.assertEqual(row.Floors_Before_Document_Review,12.)
+        self.assertEqual(row.Estimated_Height,128.4)
+
     def test_reviewed_source_conflicts_do_not_republish_counts_or_dependent_area(self):
         evidence=pd.read_csv(Path(__file__).resolve().parents[1]/'ctl/building_attribute_evidence.csv',
             dtype=str,keep_default_na=False)

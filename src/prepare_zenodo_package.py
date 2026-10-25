@@ -39,7 +39,8 @@ files += [name for name in ['attribute_enrichment_summary.json','attribute_enric
     'final_acceptance.json','component_source_reconciliation.json',
     'source_reconciliation_evidence.zip','revision_20261025_summary.json',
     'landmark_building_reference_attributes.csv','LANDMARK_REFERENCE_README_zh.txt',
-    'landmark_source_resolution_evidence.zip'] if (out/name).exists()]
+    'landmark_source_resolution_evidence.zip','release_recheck_summary.json',
+    'RELEASE_RECHECK_zh.txt','release_recheck_evidence.zip'] if (out/name).exists()]
 for name in files:
     shutil.copy2(out/name,destination/name)
 for name in ['reproduction_bundle_validation.json','release_format_validation.json',
@@ -120,6 +121,9 @@ if (out/'revision_20261025_summary.json').exists():
 if (out/'LANDMARK_REFERENCE_README_zh.txt').exists():
     report += '\n'+(out/'LANDMARK_REFERENCE_README_zh.txt').read_text(encoding='utf-8')
     (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
+if (out/'RELEASE_RECHECK_zh.txt').exists():
+    report = (out/'RELEASE_RECHECK_zh.txt').read_text(encoding='utf-8') + '\n\n【以下保留各历史修订阶段的说明；当前验收与数值以上述发布前复核为准】\n\n' + report
+    (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 (destination/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 description=f'''HK-BFETD: Hong Kong Building Function and Energy Typology Dataset — version 2.0
 
@@ -138,6 +142,8 @@ Main-class score cutoffs are selected using a separate spatial calibration parti
 
 The inventory is the original 2025-02-06 footprint stock supplemented by frozen supporting evidence; it is not a claim of complete present-day building coverage. The code, trained model and reproduction_inputs.zip are included. Input/source/output hashes and locked environment information document the exact local reference run. Exact replay uses the frozen inputs; the default workflow makes no external AI or image requests. Supplementary source evidence distinguishes source coverage and component-match candidates from primary dataset attributes; online research coverage is explicitly reported rather than described as a whole-stock web audit.
 
+The public GeoJSON uses RFC 7946 WGS84 longitude/latitude coordinates (EPSG:4326), with nine decimal places and no legacy crs member. GeoParquet retains EPSG:2326 metric geometry. Area and height attributes remain square metres and metres in all formats; longitude/latitude geometry must be projected before computing area.
+
 Create a new version of the existing Zenodo record and retain its creator and rights metadata. This file is a description draft, not a newly assigned DOI or a claim of zero physical errors. Software licensing does not replace the dataset/source-provider terms.
 '''
 if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
@@ -147,6 +153,7 @@ if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
 (destination/'READ_ME_FIRST_zh.txt').write_text('''HKBFETD v2 上传候选包
 主高度采用结构本体顶部减底部高程，地面至顶部另列。首先阅读 RELEASE_NOTES_zh.txt 和 field_dictionary.csv。
 CSV、GeoJSON、GeoParquet 为同一版本的三种格式，均保留原 341,153 个建筑/结构 ID；推荐 GIS 使用 GeoParquet。
+GeoJSON 使用 RFC 7946 的 WGS84 经度/纬度；GeoParquet 保留 EPSG:2326 米制几何。全部面积与高度属性仍为平方米和米，经纬度坐标不能直接用于平方米面积计算。
 comparisons_and_validation.zip 包括逐栋新旧对照、空间验证、桥塔处理结果、独立验证抽样模板及来源元数据。
 trained_model.zip 为本次重训模型；v2_source_snapshot.zip 为确切源代码、控制文件、测试及环境信息。
 reproduction_inputs.zip 保存本次冻结输入；在新的源码目录中解压并保留相对路径，再运行 python src/run_pipeline.py --run-root reproduction_run --input-bundle，将复现输出写入独立目录。

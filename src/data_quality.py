@@ -526,8 +526,8 @@ def apply_documented_attributes(frame, evidence):
             if not (count_conflicts.attribute.isin(['aboveground_storeys', 'reported_storeys']) &
                     count_conflicts.unit.eq('storeys')).all() or values.isna().any():
                 raise ValueError('Storey reference conflict requires valid reported storey counts')
-            if row.get('CSDI_Match_Quality') != 'same_component_id_type_footprint' or row.get('CSDI_Structure_Type') not in {'Tower', 'Temporary Structure'}:
-                raise ValueError('Documented storey conflict lacks a matched tower or temporary component')
+            if row.get('CSDI_Match_Quality') != 'same_component_id_type_footprint' or row.get('CSDI_Structure_Type') not in {'Tower', 'Podium', 'Temporary Structure'}:
+                raise ValueError('Documented storey conflict lacks a matched tower, podium or temporary component')
             frame.at[index,'Estimated_Floors'] = np.nan
             frame.at[index,'Floors_Source'] = 'documented_storey_reference_conflict_withheld'
             frame.at[index,'Floors_Quality'] = 'conflict_unresolved'

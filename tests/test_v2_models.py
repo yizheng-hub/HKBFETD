@@ -23,6 +23,25 @@ class FixedMain:
 
 
 class ModelBehaviorTests(unittest.TestCase):
+    def test_unresolved_vertical_component_scope_blocks_model_only_use(self):
+        index=pd.Index(['1','2','3'],name='BUILDINGSTRUCTUREID')
+        base=pd.DataFrame({'BUILDINGSTRUCTUREID':index,
+            'Final_Main_Class':[UNKNOWN,UNKNOWN,RESIDENTIAL],
+            'Final_Sub_Class':[UNKNOWN]*3,
+            'Classification_Source':['Unknown','Unknown','Documented_component_function'],
+            'Dimension_Ratio_Scope_QA':['low_height_to_count_scope_review',np.nan,
+                'low_height_to_count_scope_review'],
+            'Estimated_Height':[np.nan]*3,'Estimated_Floors':[np.nan]*3})
+        base.Dimension_Ratio_Scope_QA=base.Dimension_Ratio_Scope_QA.astype('string')
+        result=stage.apply_ml_calibration(base,pd.DataFrame({'area':[50.]*3},index=index),
+            {'main':FixedMain([.005,.99,.005]),'subclasses':{},
+             'validated_main_classes':[COMMERCIAL]})
+        self.assertEqual(result.Calibrated_Main_Class.tolist(),[UNKNOWN,COMMERCIAL,RESIDENTIAL])
+        self.assertEqual(result.ML_Decision_Status.iloc[0],'component_scope_unresolved_unknown')
+        self.assertEqual(result.ML_Main_Class_Candidate.iloc[0],COMMERCIAL)
+        self.assertEqual(result.ML_Confidence.iloc[0],.99)
+        self.assertTrue(result[['Estimated_Height','Estimated_Floors']].isna().all().all())
+
     def test_retained_llm_and_visual_labels_remain_model_inferred(self):
         sources = ['LLM_native_interactive', 'LLM_matching_checkpoint',
                    'Inherited_context_matched_VLM', 'CSDI_Component_Name_Keyword']

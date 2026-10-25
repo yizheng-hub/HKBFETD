@@ -211,8 +211,10 @@ def apply_ml_calibration(base,X,package):
     slender_unverified = (pd.to_numeric(result.get('Estimated_Height',pd.Series(np.nan,index=result.index)),errors='coerce').gt(100) &
         pd.to_numeric(result.get('SHAPE_Area',pd.Series(np.nan,index=result.index)),errors='coerce').lt(150) &
         result.get('Structure_Use_Type',pd.Series('',index=result.index)).fillna('').eq(''))
+    component_scope_unresolved = result.get('Dimension_Ratio_Scope_QA',pd.Series('',index=result.index)).fillna('').eq(
+        'low_height_to_count_scope_review')
     cutoffs = np.array([package.get('main_thresholds',{}).get(label,MAIN_CONFIDENCE) for label in prediction])
-    fill = unknown & (confidence >= cutoffs) & ~conflict & ~slender_unverified
+    fill = unknown & (confidence >= cutoffs) & ~conflict & ~slender_unverified & ~component_scope_unresolved
     deployment_ok = np.isin(prediction,package.get('validated_main_classes',MAIN_CLASSES))
     fill &= deployment_ok
     result.loc[fill,'Calibrated_Main_Class'] = prediction[fill]
@@ -227,11 +229,14 @@ def apply_ml_calibration(base,X,package):
     result.loc[gated,'Calibrated_Notes'] = 'Predicted class lacks sufficient held-out source-label support or precision; function remains unknown'
     result.loc[unknown & slender_unverified & ~conflict,'ML_Decision_Status'] = 'slender_structure_function_unverified_unknown'
     result.loc[unknown & slender_unverified & ~conflict,'Calibrated_Notes'] = 'Small tall structure lacks occupied-building function evidence; model-only function withheld, source dimensions retained'
+    result.loc[unknown & component_scope_unresolved & ~conflict,'ML_Decision_Status'] = 'component_scope_unresolved_unknown'
+    result.loc[unknown & component_scope_unresolved & ~conflict,'Calibrated_Notes'] = 'Component vertical scope is unresolved; model candidate retained without asserting component use'
     result['ML_Subclass_Confidence'] = np.nan
     result['ML_Subclass_Candidate'] = UNKNOWN
     for parent,model in package['subclasses'].items():
         needs_sub = result.Calibrated_Main_Class.eq(parent) & result.Calibrated_Sub_Class.eq(UNKNOWN) & ~conflict
         needs_sub &= ~result.Calibrated_Source.eq('Documented_component_function')
+        needs_sub &= ~component_scope_unresolved
         if not needs_sub.any():
             continue
         probs = model.predict_proba(X.loc[needs_sub])

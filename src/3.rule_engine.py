@@ -707,7 +707,8 @@ def apply_documented_functions(frame, evidence):
     by_id = frame.set_index('BUILDINGSTRUCTUREID').BUILDINGCSUID
     if not evidence.building_id.isin(by_id.index).all() or not evidence.csuid.eq(evidence.building_id.map(by_id)).all():
         raise ValueError('Documented function ID/CSUID binding mismatch')
-    if not evidence.component_scope.eq('tower_component').all() or not evidence.source_url.str.startswith('https://').all():
+    component_types={'tower_component':'Tower','podium_component':'Podium'}
+    if not evidence.component_scope.isin(component_types).all() or not evidence.source_url.str.startswith('https://').all():
         raise ValueError('Documented functions need explicit component scope and source URLs')
     frame['Documented_Function_Evidence'] = '[]'
     frame['Function_Before_Document_Review'] = ''
@@ -718,8 +719,8 @@ def apply_documented_functions(frame, evidence):
         main, sub = fact['main_class'], fact['sub_class']
         if main not in MAIN_CLASSES or (sub != UNKNOWN and taxonomy().get(sub) != main):
             raise ValueError('Invalid documented function taxonomy')
-        if row.CSDI_Match_Quality != 'same_component_id_type_footprint' or row.CSDI_Structure_Type != 'Tower':
-            raise ValueError('Documented function lacks a matched tower component')
+        if row.CSDI_Match_Quality != 'same_component_id_type_footprint' or row.CSDI_Structure_Type != component_types[fact['component_scope']]:
+            raise ValueError('Documented function lacks its matched tower or podium component')
         before = {col:None if pd.isna(row.get(col)) else row.get(col) for col in
             ['Final_Main_Class','Final_Sub_Class','Classification_Source','Classification_QA','Is_Conflicted']}
         frame.at[index,'Function_Before_Document_Review'] = json.dumps(before,ensure_ascii=False,default=str)
