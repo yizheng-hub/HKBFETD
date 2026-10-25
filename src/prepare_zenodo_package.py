@@ -37,7 +37,9 @@ files += [name for name in ['attribute_enrichment_summary.json','attribute_enric
     'native_row_review_evidence.zip','unified_repair_validation.json',
     'downstream_reproduction_validation.json','risk_delta_after_unified_repair.json',
     'final_acceptance.json','component_source_reconciliation.json',
-    'source_reconciliation_evidence.zip','revision_20261025_summary.json'] if (out/name).exists()]
+    'source_reconciliation_evidence.zip','revision_20261025_summary.json',
+    'landmark_building_reference_attributes.csv','LANDMARK_REFERENCE_README_zh.txt',
+    'landmark_source_resolution_evidence.zip'] if (out/name).exists()]
 for name in files:
     shutil.copy2(out/name,destination/name)
 for name in ['reproduction_bundle_validation.json','release_format_validation.json',
@@ -115,6 +117,9 @@ if (out/'revision_20261025_summary.json').exists():
     current=json.loads((out/'revision_20261025_summary.json').read_text(encoding='utf-8'))
     report += f"\n最终来源口径修订：相比紧邻的第9轮候选，主类改变{current['changed_main_class']:,}条、子类改变{current['changed_subclass']:,}条、任一改变{current['changed_either_class']:,}条。它们包含用途来源更新和真实重训的影响，不是高度纠错数量。详见revision_20261025_summary.json及comparisons_and_validation.zip内source_scope_repair_cases.csv。\n中银大厦主高度因303.3m组件高与315m结构高缺少共同基准而未知，65/70/72层分源保留。ICC保留490−29.4=460.6m结构组件高度，484m建筑高度另列；103/108/118层未调和，主层数及依赖面积未知，不能将相邻5层组件相加。KCC一号塔26/35层未调和，同样只保留可靠办公用途，主层数及依赖面积未知。所有原始来源数值、口径和撤值理由见source_reconciliation_evidence.zip。\n"
 (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
+if (out/'LANDMARK_REFERENCE_README_zh.txt').exists():
+    report += '\n'+(out/'LANDMARK_REFERENCE_README_zh.txt').read_text(encoding='utf-8')
+    (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 (destination/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 description=f'''HK-BFETD: Hong Kong Building Function and Energy Typology Dataset — version 2.0
 
@@ -152,6 +157,9 @@ reproduction_inputs.zip 保存本次冻结输入；在新的源码目录中解�
 if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
     first=destination/'READ_ME_FIRST_zh.txt'
     first.write_text('【已按约定风险范围验收】全库工程检查与屋宇署关联风险核查的范围、来源及未证实项见ROW_REVIEW_STATUS_zh.txt；不宣称全库每个属性均经独立实测。\n\n'+first.read_text(encoding='utf-8'),encoding='utf-8')
+if (out/'LANDMARK_REFERENCE_README_zh.txt').exists():
+    first=destination/'READ_ME_FIRST_zh.txt'
+    first.write_text('【中银/ICC整栋属性补充】landmark_building_reference_attributes.csv明确保存整栋口径的已查明数值及来源；请先读LANDMARK_REFERENCE_README_zh.txt，区别整栋与组件主字段，不将整栋层数自动用于组件面积。\n\n'+first.read_text(encoding='utf-8'),encoding='utf-8')
 inventory={p.name:{'bytes':p.stat().st_size,'sha256':file_hash(p)} for p in sorted(destination.iterdir()) if p.is_file() and p.name not in ['SHA256SUMS.txt','package_manifest.json']}
 manifest={'version':'2.0','created_utc':datetime.now(timezone.utc).isoformat(),
     'previous_record':'https://zenodo.org/records/20710499','remote_actions':'none',

@@ -101,6 +101,15 @@ distinguish these meanings. Conflicts in comparable sources are withheld;
 different-reference discrepancies are flagged. Missing heights are not filled
 with 15 m. Original dimensions remain unchanged in raw fields.
 
+`landmark_building_reference_attributes.csv`, when present in the release,
+provides separately scoped whole-building reference facts for Bank of China
+Tower and ICC. It records documented body/architectural heights and CTBUH
+above-ground main-floor counts, with explicit definitions and sources. These
+facts remain usable even when their conversion to a mapped component's vertical
+extent is unresolved. They do not overwrite component elevations or supply
+component GFA/model inputs. See `LANDMARK_REFERENCE_README_zh.txt` for the join
+keys and source-to-component limits.
+
 The source provider is [LandsD CSDI Building](https://portal.csdi.gov.hk/csdi-webpage/metadata/landsd_rcd_1637211194312_35158/html).
 The active snapshot is the official 2026-10-20 bulk release, with 342,233
 components. Download URL and raw/GeoParquet SHA256 are recorded in
