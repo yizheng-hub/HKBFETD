@@ -30,9 +30,9 @@ pip install -r requirements.txt
 
 ## v2 reproduction
 
-The v2 repair preserves the original `output/` and `intermediate_files/` releases.
-New files go into `output/v2/`, `intermediate_files/v2/` and `log/v2/`.
-This repository contains the SD building classification project only.
+The v2 repair preserves the public v1/v1.1 files. The single final publication
+folder is `output/zenodo_upload_v2/`; older `output/v2` candidates are not release
+inputs. This repository contains the SD building classification project only.
 
 The public GeoJSON uses RFC 7946 WGS84 longitude/latitude (EPSG:4326),
 with nine decimal places and no legacy `crs` member. GeoParquet retains
@@ -40,51 +40,71 @@ EPSG:2326 metric geometry. Attributes and identifiers agree across CSV,
 GeoJSON and GeoParquet; areas remain in square metres and heights in metres.
 Use projected geometry for area calculations.
 
-Activate `HKbuilding`, restore the frozen inputs listed below, then run:
+The corrected V2 classification replay keeps the published method fixed at the
+original sequence: keyword rules, frozen LLM/VLM checkpoints, the original nine
+machine-learning features, and the original Step 10 public-label
+standardization. The replay binds the verified physical-attribute table, the
+GFA-rule withdrawal list, explicit non-building scope, 79 original-prompt review
+results, the frozen VLM suggestions and their reuse audit. The 427 cached prompts
+whose storey value changed are diagnostic checks only. The replay does not read
+web-derived function evidence and does not make external AI requests.
+
+Activate `HKbuilding`, extract `reproduction_inputs_complete.zip` from the same V2
+release, and run its checksummed manifest through the formal replay entry:
 
 ```powershell
-python src/run_pipeline.py --input-bundle
+python src/replay_original_v2.py `
+  --inputs-manifest reproduction_inputs/original_method_v2/manifest.json `
+  --output-dir output/v2_original_replay
+```
+
+Use `--check-only` to verify all inputs and frozen source hashes without running
+classification. Use `--resume` to reuse only output files whose source, input,
+upstream and output hashes still match. The classification table consumed by
+the release builder is
+`output/v2_original_replay/ml/step10_original_method_standardized.csv`; raw
+Step 9 output is not a public classification table.
+
+The optional physical-source rebuild remains separate from the formal
+classification replay. Extract
+`physical_source_inputs_20261025.zip` from the reproduction archive into this
+checkout, then run:
+
+```powershell
+python src/run_pipeline.py --through 2 --input-bundle
 python -m unittest discover -s tests -v
 ```
 
-To continue an interrupted run, use `python src/run_pipeline.py --resume --input-bundle`.
+To continue an interrupted physical-source rebuild, use
+`python src/run_pipeline.py --resume --through 2 --input-bundle`.
 Completed stages are reused only when source, inputs, upstream results and output
 hashes match, including all three release figures. Resume rejects a changed or
 unknown recorded runtime/dependency environment before overwriting its provenance;
 restore that environment or run a full rebuild. Logs are in `log/v2/runner_step_N.txt`.
 `--run-root D:\HKBFETD-replay` puts generated results in a separate directory;
-source inputs continue to be read from this checkout. `--through 3` stops after
-the requested stage. The default run makes no external AI or imagery requests.
+source inputs continue to be read from this checkout. The corrected publication
+classification must use `replay_original_v2.py`; the later experimental stages
+in `run_pipeline.py` are not the corrected V2 release method.
 
-Required inputs are not in Git. Use `output/v2/reproduction_inputs.zip`, when
-provided, and extract its relative paths into the checkout. It contains:
+Required binary inputs are not in Git. Use
+`reproduction/reproduction_inputs_complete.zip` from the final release. It
+contains:
 
-- the 14 converted LandsD tables in `data/LandsD/`, source date 2025-02-06;
-- BDBIAR, OZP zones and Overture places at the paths in `src/config.py`;
-- the frozen pre-aggregation OSM/Overture snapshot in
-  `data/sources/osm_features_snapshot.geojson`;
-- coordinate-checked DTM samples and metadata in `data/sources/`;
-- the frozen CSDI Building GeoParquet and metadata in `data/sources/`, pinned to
-  the public distributor revision recorded in its metadata (source SHA256 checked);
-- explicit OSM structural-object polygons extracted from the frozen local PBF,
-  plus extraction criteria and source hashes in `data/sources/`;
-- the old v1.1 CSV used for comparison and available historical AI evidence.
+- `original_method_v2/manifest.json`, conforming to
+  `ctl/original_method_replay_inputs.schema.json`, with relative paths and
+  SHA-256 values for the original stage 2/3/4/5 checkpoints, verified physical
+  table, GFA-withdrawal list, accepted LLM replay evidence, frozen stage 6
+  suggestions and their independent reuse audit;
 
-`data/sources/source_manifest.json` records provenance of the frozen supporting
-sources. `output/v2/pipeline_run_manifest.json` records every input hash, stage
-source hash and required output hash. The source ZIP, exact package versions,
-dependency lock and optional Conda explicit specification accompany each run.
-Live OSM extracts, terrain samples and external model calls cannot be assumed
-to reproduce a historical snapshot. Preserve the input bundle.
-Small source-provenance JSON files are tracked in Git; source binaries remain
-in the input bundle. Generic residential tags do not determine public/private
-housing tenure; explicit source evidence is preserved separately from model inference.
-BDBIAR matching considers all points before name-based roles. Only one point
-inside exactly one footprint donates function/year evidence; proximity, ties
-and overlapping ownership remain linkage records without usable attributes.
-OZP source labels literally equal to `NULL` are normalized to missing codes,
-with their `Nullah` descriptions retained; frozen raw zone files retain the
-original placeholders. Planning zones describe intent, not observed building use.
+- the frozen raw/source bundle used by physical stages 1–2;
+- the successful runtime versions and package lock;
+- the complete replay manifest and release classification-integrity result.
+
+The source-evidence archive records the adopted physical facts and scope limits.
+Live OSM/CSDI extracts, terrain samples, and external model calls cannot be
+assumed to reproduce the frozen release, so preserve both reproduction archives.
+Generic residential tags do not determine public/private housing tenure;
+planning zones describe intent rather than observed building use.
 
 ## Physical attributes and uncertainty
 
@@ -115,6 +135,13 @@ facts remain usable even when their conversion to a mapped component's vertical
 extent is unresolved. They do not overwrite component elevations or supply
 component GFA/model inputs. See `LANDMARK_REFERENCE_README_zh.txt` for the join
 keys and source-to-component limits.
+
+In the final V2 table, Bank of China Tower (Building ID 181189) uses the matched
+component height 303.3 m and an unknown component floor count. ICC (192326) uses
+the matched tower-component height 460.6 m and an unknown component floor count.
+Their owner/CTBUH whole-building heights and 65/70/72 or 103/108/118 floor claims
+remain separately scoped evidence because no complete component-level vertical
+crosswalk resolves those definitions.
 
 The source provider is [LandsD CSDI Building](https://portal.csdi.gov.hk/csdi-webpage/metadata/landsd_rcd_1637211194312_35158/html).
 The active snapshot is the official 2026-10-20 bulk release, with 342,233
@@ -192,29 +219,24 @@ Tower/podium footprints may overlap or coincide. Use a geometry union for ground
 coverage; do not interpret their summed footprints as net land area.
 
 Function evidence, classifier probabilities and use-area fractions are separate.
-POI counts and model probabilities do not become area shares. Single-function
-vectors are labeled assumptions; unknown mixed-use shares remain empty. Main
-function and subclass models are retrained with a spatial holdout, without
-neighbor class labels, using imputation fitted within the training partition.
-Scores measure agreement with weakly supervised source labels; independent
-field-survey accuracy is not established by this release.
-The release's independent code/data review checks consistency and implementation;
-it does not replace independent field observations of building function.
-Source conflicts remain unknown even when a model probability exceeds its
-threshold. A tiny footprint without other evidence is not automatically noise.
-Records marked `low_height_to_count_scope_review` retain unresolved component
-vertical scope. The model keeps its candidates and probabilities but does not
-fill missing component functions or subclasses; supported source functions remain.
-Model-filled main/subclasses additionally require at least 30 confidence-qualified
-spatial-holdout predictions and precision >=0.80 against source labels. Classes
-failing this deployment gate remain unknown. The holdout is used for this gate;
-its scores are not independent accuracy after selecting deployable classes.
-Main-class score cutoffs are selected first using a separate spatial calibration
-partition inside the outer training data: at least 30 predictions and precision
->=0.90 against source labels. Outer holdout labels do not select these cutoffs.
-This calibrates decision cutoffs, not the model's probability values.
+POI counts and model probabilities do not become area shares. V2 reuses the
+original rule definitions, keyword file, LLM/VLM decisions, nine-feature model
+and public-label mapping from commit `de8b46b`; later web research about building
+use is retained only as audit material and is not an input to classification.
+Changes in the corrected V2 classification can therefore arise only from the
+explicit GFA-evidence withdrawal, the 79 original-prompt candidates without a
+legacy cache entry, the frozen VLM propagation decisions, or retraining the
+original model with corrected physical inputs. Another 427 cached prompts whose
+storey input changed were reviewed as diagnostics and were not allowed to
+replace the established function classification. Missing or conflicting physical
+facts remain null in the published fields; the original model's internal 15 m
+imputation is not written back as a building height.
 
 ## Optional AI review and image recovery
+
+This optional legacy workflow is not an input to the corrected V2.0 release.
+The corrected release replays only the frozen, checksummed checkpoints in its
+reproduction archive.
 
 Text and vision review are targeted at functional or footprint ambiguities.
 Neither is allowed to invent height, storeys, GFA or use percentages. API keys
@@ -281,166 +303,45 @@ Run scripts in order under `src/`:
 ## Reproducibility Notes
 
 - v1/v1.1 files remain in their original locations and are not overwritten.
-- The pre-CSDI terrain baseline is retained as full GeoParquet, model and exact
-  source/input bundles in `output/v2_terrain_baseline_20261023/`.
+- The final release carries the exact V2 replay inputs and their SHA-256 manifest
+  in `reproduction/reproduction_inputs_complete.zip`.
 - Missing values are exported as null with source and quality fields.
 - Geometry uses EPSG:2326 (metres); GeoParquet is recommended for GIS exchange.
 - Review source dates, terrain estimates, assumptions and coverage in the release notes.
-- The original plotting notebook remains a legacy analysis. New v2 comparison
-  and validation figures are generated by Step 10 in `output/v2/figures/`.
+- The original plotting notebook and figures remain unchanged legacy analyses;
+  they are not regenerated or packaged by the corrected replay.
 
-## Main Deliverables
+## V2.0 release deliverables
 
-Whole-stock native-agent factual review is incomplete. Program checks and model
-agreement with weak source labels are separate from independently verified facts.
-The current native-agent ledger in `output/native_review_progress/` records actual
-per-row coverage. Older ledger trees are preserved in the verified archives indexed
-by `output/history_20261025/ARCHIVE_INDEX.json`; pending rows are never counted as
-LLM reviewed. Step 4's default offline
-queue does not call an LLM. Its explicit external API mode is a different workflow.
+The corrected publication package is built only by `src/build_v2_release.py` and
+is written to `output/zenodo_upload_v2/`. The builder accepts explicit files,
+validates CSV/GeoParquet/GeoJSON IDs and fields, requires passing machine-readable
+validation reports, and writes both a package manifest and SHA-256 checksums. It
+does not scan older `output/v2` candidates.
 
-The current review scope uses automatic checks over all 341,153 records, followed
-by native review of the 2,939 Buildings Department related risk candidates.
-That fixed initial queue has been reviewed; source-scope repairs, rebuilding,
-retraining and a fresh independent final review remain separate acceptance gates.
-Unlinked village-house records are not individually searched. Missing and
-unverified values remain explicit unknowns rather than invented replacements.
+The package contains:
 
-Source reconciliation also checks adoption coverage. Office building descriptions
-can supply reviewed function facts without donating their reported height, storey
-count or area. Bank of China Tower's component/owner height references remain
-unreconciled; ICC's 103/108/118, Millennia Plaza's 25/32 and KCC Tower 1's 26/35
-counts remain separate source reports. Their unresolved primary fields and
-dependent uniform-floorplate area proxies are withheld. Horizontally adjacent
-components are never reconciled by adding their storey counts. ICC remains
-Commercial with an unknown subclass because its office and hotel uses lack
-verified comparable area shares.
+- `HKBFETD_v2.csv`, `HKBFETD_v2.parquet`, and `HKBFETD_v2.geojson`;
+- `schema.json` and a Chinese release README;
+- the retrained original-method model and metrics;
+- physical, classification-integrity, and V1.1-to-V2 comparison reports;
+- a checksummed frozen replay-input archive and source snapshot;
+- source-scope and landmark evidence needed to interpret adopted and withheld
+  dimensions.
 
-Tenant points, addresses and linked access descriptions do not establish an
-entire component's dominant function. Matched function-bearing building polygons,
-scoped sources and reviewed `ctl/building_function_evidence.csv` supply function
-evidence. Housing subtypes are not model-filled from morphology: unverified
-suggestions remain in `ML_Subclass_Candidate`. Reviewed documentary functions
-retain their prior decisions and source scope. Unknown documented subclasses
-are not overwritten by model suggestions.
-Documented functions require an exact ID/CSUID match and the declared tower or
-podium component type. A source for one component cannot be applied to the
-other. Documentary warehouse-block GFA is kept separate from parking-podium
-and whole-property totals and from the uniform-floorplate proxy.
+All 341,153 stock records are covered by automatic source, range, formula,
+cross-format, and classification-integrity checks. Physical facts that cannot be
+mapped reliably to a tower, podium, or whole-building component remain null with
+source and quality fields. This is a declared unknown, not a replacement value.
+The release validation establishes reproducibility and consistency with the
+cited sources; it does not claim that every unknown building attribute has been
+independently measured in the field.
 
-Native session review continues with `src/native_review_progress.py`. Its local
-state is kept in `output/native_review_progress/`; exported batches remain
-pending until exact, dataset-bound results with queries and source-access status
-are ingested. Pending batches reserve their IDs to avoid duplicate agent work.
-Historical distinct-row coverage and current-snapshot coverage are reported
-separately; a changed dataset does not inherit an earlier factual certificate.
-The helper never calls an external model or purchases API credits.
-
-Unresolved documentary storey-reference conflicts withhold the primary count
-and its footprint-based GFA proxy, retaining the original count and cited
-alternative in the evidence fields. A tower's residential use does not establish
-private versus subsidized tenure.
-
-- `output/v2/HKBFETD_v2.csv`, `.geojson`, `.parquet`
-- `output/v2/v1_1_to_v2_building_changes.csv` and `comparison_summary.json`
-- `output/v2/model_validation.json` and spatial split/prediction tables
-- `output/v2/release_validation.json` and `release_checksums.json`
-- `output/v2/unresolved_building_review_queue.csv`
-- `output/v2/stratified_manual_validation_template.csv`
-- `output/v2/RELEASE_NOTES_zh.txt` and `figures/`
-- `output/v2/v2_source_snapshot.zip` and `reproduction_inputs.zip`
-
-After the complete run, `python src/analyze_height_sensitivity.py` compares the
-same trained model with current versus v1.1 heights, and
-`python src/verify_reproduction_bundle.py` checks every archived input and source.
-`python src/verify_release_formats.py` reads back all fields and geometries in
-the three released formats and checks their agreement.
-`python src/verify_release_preservation.py` additionally checks the local archived
-terrain baseline and original-file preservation inventory; it requires that
-reference archive. `python src/prepare_zenodo_package.py` collects the completed
-local comparison/verification products in `output/zenodo_upload_v2/` without
-uploading or publishing anything. Raw multi-provider inputs stay in their
-separate local archive. The publication folder includes exact checksums.
-`audit_dataset.py` reproduces the initial v1/v1.1 diagnostic audit from the
-preserved root-level releases. Its historical flags are not a v2 acceptance
-result; use the release verification commands above for v2.
-
-A single permit-to-structure link establishes administrative uniqueness, rather
-than physical component, construction phase or current-use correspondence.
-Its areas require explicit physical-scope evidence before component adoption.
-Domestic/nondomestic permit accounts never supply measured current-use shares
-or force a mixed-use label. The reported permit areas remain
-available with `Permit_GFA_Usable=false` and the scope reason; they cannot supply
-component GFA, mixed-use labels or measured area shares. A positive structure
-registration is also withheld when component storey scope is unresolved: its raw
-value remains available, with `registered_component_scope_unresolved` and a
-withheld-source marker. A count-only repair does not recertify the area.
-Other reported registrations retain their values with an explicit unvalidated
-quality label. Independently documented component GFA retains its own source.
-
-When the source component height and selected reported storeys imply less than
-1 m per storey, both primary values are withheld for unresolved component scope.
-The same conservative hold applies to unreconciled multi-storey pairs below
-2 m per storey. Single-level structures and the 2 m boundary are not rejected
-by that additional screen; high spans per storey remain separate review signals.
-Explicit evidence that only the count has the wrong scope preserves the
-independently supported component height. Documentary component evidence is
-evaluated separately and never replaced by height divided by three.
-Original elevations, reported counts and the height candidate remain available;
-the candidate is not an accepted fallback height. Tall bridge pylons retain
-their separately identified structural heights.
-
-The retrieved official CSDI schema does not define `Storeys` as aboveground-only.
-Its raw count and separate basement count are retained with explicit scope QA;
-neither the count alone nor subtracting basements supplies the primary
-aboveground count or floor-area proxy. Explicit native aboveground counts,
-compatible OSM levels and source-scoped component documents remain eligible.
-Both LandsD and CSDI names are retained to expose ancillary-component identities.
-
-Generic `Court` alone is not judicial-use evidence: keyword classification requires
-a specific legal-court context (such as High Court, District Court or Court of Final
-Appeal, or an explicit Chinese court/courthouse term). Housing names, sports courts
-and food courts do not imply judicial use; other independent evidence remains in
-force.
-
-An Active CSDI component explicitly named as a substation/transformer station
-must match the component ID, type and footprint before its utility use is
-mapped to the existing Other Commercial taxonomy. The source-name evidence
-retains the prior decision; parent housing/school/hospital names and visual
-inheritance cannot replace this component use. A residential permit linked to
-such a station remains unusable until its component scope is reconciled.
-
-Exact component purpose names `Residents Club` and `Assembly Hall` (including
-their recorded Chinese names) use the same Active, component identity and
-footprint gate to infer Other Commercial. Compound names do not trigger this
-rule. This source-name inference establishes neither current operation nor
-measured use-area shares, and shared school or residential tags do not transfer
-to the named component.
-
-The BDBIAR integrity registry uses stable Block IDs, preserving original point
-matches and source candidates. Confirmed source inconsistencies and unresolved
-component identities block BD age/class donations. Snapshot-coordinate changes
-are separately marked; newer points are not automatically substituted. These
-controls do not invalidate independent LandsD permit or registration sources.
-
-Exact active CSDI names distinguish an institution's residences from its teaching,
-clinical and service components. School Dental Clinic remains healthcare; school
-or university affiliation does not turn a dormitory into a teaching building.
-Residence offices, multi-function halls and compound school/quarters names do not
-establish a single dominant function. Unresolved component names retain their
-prior decision and source text as evidence, with an unknown primary function and
-source-conflict flags preventing model-only completion. Existing mixed functions
-are not collapsed solely by a name keyword.
-
-Training retains independently supported function labels when only area-scope
-QA is unresolved; those area warnings remain in the records. Unresolved function
-scope, conflicting use evidence and subclass/parent conflicts still exclude labels.
-
-Langham Place's 59 reported levels include roof levels; the earlier normalized
-storey adoption is withdrawn pending scope reconciliation. Its partial valuation
-gross rentable area and rounded marketing gross area are not component GFA.
-Parking-machine layers likewise do not establish occupied storeys or continuous
-floor plates. All original reports remain in the evidence fields and old version.
+The V1.1 comparison is ID-exact. Every V1.1 row whose classification source
+contains `Keyword` keeps its main class. Main-class changes outside that set are
+reported separately for non-building scope, withdrawn GFA-dependent rules,
+frozen VLM decisions, and retraining of the original nine-feature model. Later
+web research about building use is not a classifier input.
 
 ## License
 

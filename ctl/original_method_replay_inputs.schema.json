@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HKBFETD corrected V2 original-method replay inputs",
+  "type": "object",
+  "required": ["schema_version", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "legacy_stage2",
+        "legacy_stage3",
+        "legacy_stage4",
+        "legacy_stage5",
+        "verified_physical",
+        "nonbuilding_scope",
+        "gfa_rule_delta",
+        "llm_review_summary",
+        "llm_prompt_contract",
+        "native_reviews",
+        "stage6_suggestions",
+        "vlm_audit"
+      ],
+      "properties": {
+        "legacy_stage2": {"$ref": "#/$defs/file"},
+        "legacy_stage3": {"$ref": "#/$defs/file"},
+        "legacy_stage4": {"$ref": "#/$defs/file"},
+        "legacy_stage5": {"$ref": "#/$defs/file"},
+        "verified_physical": {"$ref": "#/$defs/file"},
+        "nonbuilding_scope": {"$ref": "#/$defs/file"},
+        "gfa_rule_delta": {"$ref": "#/$defs/file"},
+        "llm_review_summary": {"$ref": "#/$defs/file"},
+        "llm_prompt_contract": {"$ref": "#/$defs/file"},
+        "native_reviews": {"$ref": "#/$defs/file"},
+        "stage6_suggestions": {"$ref": "#/$defs/file"},
+        "vlm_audit": {"$ref": "#/$defs/file"}
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

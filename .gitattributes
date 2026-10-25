@@ -1,2 +1,4 @@
 output/HK_UBEM_Buildings_Public_v1.csv filter=lfs diff=lfs merge=lfs -text
 output/HK_UBEM_Buildings_Public_v1.geojson filter=lfs diff=lfs merge=lfs -text
+src/frozen_original_method/ctl/** -text
+src/frozen_original_method/src/** -text

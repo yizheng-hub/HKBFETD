@@ -1,0 +1,34 @@
+Task: Assign building category labels based on the provided information.
+
+[Input Data]
+- Name: {name_c}
+- Address: {addr}
+- Structure Type: {struct_type} (T=Tower, P=Podium, U=Underground)
+- Spatial Features: {matched_pois}
+- Floors: {floors}
+- LandsD Category Code: {category}
+
+{category_mapping}
+
+[Classification Rules]
+1. FUNCTIONAL OVERRIDE (CRITICAL): If the name explicitly contains "Car Park", "Market", "Substation", "Pump House", or "Public Toilet", classify as Commercial -> Other Commercial.
+2. SUBSTATION HARD RULE (CRITICAL): NEVER classify "Substation / 变电站 / 變電站" as Non-assessed. It must be Commercial -> Other Commercial.
+3. MIXED-USE (ESSENTIAL): If Structure Type is "T" (Tower), Floors > 1, and spatial features include commercial clues ([restaurant], [shop], [bank], [clinic], [school]), classify as Mixed-use.
+4. RELIGIOUS BUILDINGS: Churches, Temples, Mosques, etc. should be classified as Commercial -> Other Commercial.
+5. HOUSING NAMES: Terms related to public/private housing should follow taxonomy-defined residential subclasses.
+
+[Taxonomy]
+{taxonomy_prompt}
+
+[Output Requirements]
+1. Return strict JSON only with keys: reasoning, main_class, sub_class, confidence.
+2. main_class must be one of:
+   - Residential_住宅类别
+   - Commercial_商业类别
+   - Industrial_工业类别
+   - Non-assessed_非评估类别
+   - Mixed-use_混合用途
+3. sub_class must come from the taxonomy and should follow bilingual style when available: English_中文.
+4. confidence must be a float in [0.00, 1.00].
+5. Do not invent new categories.
+6. No conversational text outside JSON.

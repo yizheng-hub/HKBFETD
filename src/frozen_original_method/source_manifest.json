@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "source_git_commit": "de8b46b32fb5853a0777cacd09cbe099b4141a08",
+  "classification_order": [
+    "rule_engine",
+    "llm_checkpoint",
+    "vlm_checkpoint",
+    "nine_feature_machine_learning",
+    "step10_public_classification_standardization"
+  ],
+  "files": {
+    "ctl/ai_calibration_prompt.txt": "5709de4841b653795a8c2dea1b933e2f8f1badca28167f3bf8aeba31c0b88485",
+    "ctl/keywords.json": "3e7e2330607d5e0e38d0d6fb246183b75fa76f1c0ed8a65189c5762f567e9910",
+    "ctl/llm_taxonomy.json": "7afbf19874b890ed084120bbec003a9f2efdfa23086fa16508a6b920471800e6",
+    "ctl/step10_public_mappings.json": "6eb10bdbd5a6178596ab9474b9e562f0b63aa0adecef764565b9629564a494b6",
+    "ctl/step4_llm_verification_prompt.txt": "8fd16e81ac41c78bd869f08a7e003f48ef2c856ded0d43974ff16a03f91e8fb3",
+    "src/3.rule_engine.py": "291e748c84f8d80ab6f3ee1a64f666d933dfc893e2f00b36e876be63c1d48378",
+    "src/4.llm_verification.py": "8eece6231e4d50070457d928518d1d89efa670bce3543fc6b230a715c17f5e63",
+    "src/5.evaluation_and_merge.py": "2ab6bc0bdd6be6c589f09dd2fa98d4e9ac6fc3f93bf9b21302ffd98841e95c72",
+    "src/6.geometry_ai_arbitration.py": "a8c5ec7e4c38b0da0cb01100c581f8138bb1b4d55e6aad24481eedd9aee80463",
+    "src/7.apply_calibrations.py": "ffaf79e1d73f8f830998973c7dd8b6baa335dc4f12c59f645a911ed4f56d391e",
+    "src/8.feature_engineering.py": "3595d78e9e2521f275e1659fe568efe14e58196425a291d92b1dc1b08215620d",
+    "src/9.ml_classification.py": "b561f64ec3bbbd6c47aa039fd9842421ef6394bb9bcb6a0d44a687a8d443d63c",
+    "src/10.final_statistics_report.py": "3f3e04db450a652d021c0e70898765bec71161547a37552c8101954e02e20c19",
+    "src/config.py": "ae5a0039564f8178785d6158e5635cbb18f65116ceb034933a324544d88a033f",
+    "src/utils.py": "9a4deb3f253c1d5197f2cb1482aa13aa6d6f4ea3dfbfd017d5a38ec3775b0606"
+  }
+}
