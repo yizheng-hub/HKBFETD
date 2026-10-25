@@ -61,6 +61,12 @@ def load_module():
 
 
 class AssembleV2ReleaseDatasetTests(unittest.TestCase):
+    def test_field_type_recognises_nullable_object_boolean(self):
+        self.assertEqual(
+            self.module._field_type(pd.Series([True, pd.NA], dtype="object")),
+            "boolean",
+        )
+
     def setUp(self):
         self.module = load_module()
         self.temporary = tempfile.TemporaryDirectory()

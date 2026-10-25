@@ -383,6 +383,11 @@ def _field_type(series: pd.Series) -> str:
         return "number"
     if pd.api.types.is_datetime64_any_dtype(series.dtype):
         return "datetime"
+    present = series.dropna()
+    if not present.empty and present.map(
+        lambda value: isinstance(value, (bool, np.bool_))
+    ).all():
+        return "boolean"
     return "string"
 
 
