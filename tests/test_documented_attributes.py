@@ -30,6 +30,32 @@ def facts(**changes):
 
 
 class DocumentedAttributesTests(unittest.TestCase):
+    def test_reviewed_source_conflicts_do_not_republish_counts_or_dependent_area(self):
+        evidence=pd.read_csv(Path(__file__).resolve().parents[1]/'ctl/building_attribute_evidence.csv',
+            dtype=str,keep_default_na=False)
+        cases={'181189':(303.3,65.),'192326':(460.6,103.),
+               '152237':(128.4,25.),'278024':(148.,26.)}
+        for bid,(height,count) in cases.items():
+            with self.subTest(building_id=bid):
+                selected=evidence.loc[evidence.building_id.eq(bid)]
+                frame=component()
+                frame[ID]=bid
+                frame['BUILDINGCSUID']=selected.csuid.iloc[0]
+                frame['Estimated_Height']=height
+                frame['Estimated_Floors']=count
+                frame['CSDI_Reported_Storeys']=count
+                row=apply_documented_attributes(frame,selected).iloc[0]
+                self.assertTrue(pd.isna(row.Estimated_Floors))
+                self.assertTrue(pd.isna(row.GFA_Proxy_sqm))
+                self.assertEqual(row.CSDI_Reported_Storeys,count)
+                self.assertEqual(row.Height_Before_Document_Review,height)
+                stored=json.loads(row.Reported_Attribute_Evidence)
+                self.assertEqual({r['evidence_id'] for r in stored},set(selected.evidence_id))
+                if bid=='181189':
+                    self.assertTrue(pd.isna(row.Estimated_Height))
+                else:
+                    self.assertEqual(row.Estimated_Height,height)
+
     def test_storey_reference_conflict_withholds_count_and_proxy_but_retains_raw_evidence(self):
         frame=component()
         frame['Estimated_Floors']=25.

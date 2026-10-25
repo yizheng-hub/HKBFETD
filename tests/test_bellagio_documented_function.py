@@ -15,6 +15,21 @@ spec.loader.exec_module(rules)
 
 
 class BellagioDocumentedFunctionTests(unittest.TestCase):
+    def test_every_control_can_be_applied_without_inventing_physical_attributes(self):
+        facts=pd.read_csv(ROOT/'ctl/building_function_evidence.csv',dtype=str,keep_default_na=False)
+        frame=pd.DataFrame([{
+            'BUILDINGSTRUCTUREID':fact.building_id,'BUILDINGCSUID':fact.csuid,
+            'Final_Main_Class':UNKNOWN,'Final_Sub_Class':UNKNOWN,
+            'Classification_Source':'Unknown','Classification_QA':'','Is_Conflicted':False,
+            'CSDI_Match_Quality':'same_component_id_type_footprint','CSDI_Structure_Type':'Tower',
+            'Estimated_Height':float('nan'),'Estimated_Floors':float('nan'),
+            'GFA_Best_Available_sqm':float('nan'),'Evidence_Subclass_Weights':'',
+        } for fact in facts.itertuples()])
+        result=rules.apply_documented_functions(frame,facts)
+        self.assertEqual(result.Final_Main_Class.tolist(),facts.main_class.tolist())
+        self.assertEqual(result.Final_Sub_Class.tolist(),facts.sub_class.tolist())
+        self.assertTrue(result[['Estimated_Height','Estimated_Floors','GFA_Best_Available_sqm']].isna().all().all())
+
     def test_named_towers_keep_broad_reported_use_without_tenure_or_measured_area(self):
         bindings = {
             '128806': '2434425301T20050430', '128809': '2438225301T20050430',

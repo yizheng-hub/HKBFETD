@@ -36,7 +36,8 @@ files += [name for name in ['attribute_enrichment_summary.json','attribute_enric
     'row_revision_field_changes.csv','documented_function_evidence.csv',
     'native_row_review_evidence.zip','unified_repair_validation.json',
     'downstream_reproduction_validation.json','risk_delta_after_unified_repair.json',
-    'final_acceptance.json'] if (out/name).exists()]
+    'final_acceptance.json','component_source_reconciliation.json',
+    'source_reconciliation_evidence.zip','revision_20261025_summary.json'] if (out/name).exists()]
 for name in files:
     shutil.copy2(out/name,destination/name)
 for name in ['reproduction_bundle_validation.json','release_format_validation.json',
@@ -54,7 +55,9 @@ changes=['v1_1_to_v2_building_changes.csv','v1_1_to_v2_class_transition.csv',
     'model_spatial_split.csv','model_holdout_predictions.csv','reader_cases_v2.csv']
 changes += [name for name in ['before_enrichment_to_v2_attribute_changes.parquet',
     'before_row_review_to_v2_attribute_changes.parquet','before_risk_repair_field_changes.csv',
-    'before_risk_repair_all_field_changes.parquet','reviewed_typical_cases.csv'] if (out/name).exists()]
+    'before_risk_repair_all_field_changes.parquet','reviewed_typical_cases.csv',
+    'before_source_scope_repair_field_changes.csv','before_source_scope_repair_changes.parquet',
+    'source_scope_repair_cases.csv'] if (out/name).exists()]
 with zipfile.ZipFile(destination/'comparisons_and_validation.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
     for name in changes:archive.write(out/name,name)
     for name in RELEASE_FIGURES:archive.write(out/'figures'/name,'figures/'+name)
@@ -101,13 +104,16 @@ v1.1→v2 主类变化 {comparison['changed']['Main_Class']:,} 条、子类变�
 '''
 if (out/'attribute_enrichment_summary.json').exists():
     enrichment=json.loads((out/'attribute_enrichment_summary.json').read_text(encoding='utf-8'))
-    report += f"\n补充修订：采用地政总署2026-10-20官方批量快照，保留记录创建/更新时间，不将其冒充竣工或测量日期。属性证据表覆盖{enrichment['web_researched_buildings']}个有名建筑记录（包括排除错配来源的记录），不是全港逐栋网页核实。明确组件口径的层数文档{enrichment['component_storey_documents']}项、文档GFA{enrichment['component_gfa_documents']}项。\n中环广场塔楼75层、泓富产业千禧广场32层采用对应文档调和；朗豪坊59个报告层级的物理层数口径未决，主层数与依赖代理面积留空。来源旧值、其他计数口径、地下层及不同面积种类分别保留。文档GFA不冒充登记GFA，住宅单位内部面积及可出租面积不当作GFA。\n修订前v2至本次所有共有字段对照及覆盖变化见attribute_enrichment_summary.json和对照附件；原检查点、模型、输入与代码在本地v2_before_enrichment_20261023中保留。\n"
+    report += f"\n补充修订的历史阶段：采用地政总署2026-10-20官方批量快照，保留记录创建/更新时间，不将其冒充竣工或测量日期。历史属性增补报告覆盖{enrichment['web_researched_buildings']}个有名建筑记录（包括排除错配来源的记录），不是全港逐栋网页核实；该阶段统计的层数文档{enrichment['component_storey_documents']}项、GFA文档{enrichment['component_gfa_documents']}项不代表全部仍获当前主值采纳。\n中环广场塔楼75层保留。泓富产业千禧广场的32层曾在历史增补阶段采纳，本轮发现跳号楼层标签与原始25层没有可靠实体层对应，已撤销主层数及依赖代理面积；办公用途文档仍可采用。朗豪坊59个报告层级的物理层数口径未决，主层数与依赖代理面积留空。来源旧值、其他计数口径、地下层及不同面积种类分别保留。文档GFA不冒充登记GFA，住宅单位内部面积及可出租面积不当作GFA。\n历史阶段对照及覆盖变化见attribute_enrichment_summary.json；本轮当前来源采纳与撤值以component_source_reconciliation.json和revision_20261025_summary.json为准。原检查点、模型、输入与代码在本地v2_before_enrichment_20261023及history_20261025归档中保留。\n"
 if (out/'ROW_REVIEW_STATUS_zh.txt').exists():
     report = (out/'ROW_REVIEW_STATUS_zh.txt').read_text(encoding='utf-8') + '\n' + report
     report += '\n逐条复查后的批量修订：租户POI不再确定整栋用途，地址及连接天桥描述不再冒充主体用途；房委会产权类别不单独确定住宅用途或公屋子类。模型住房子类仅保留为候选，不自动采用。中环广场文档总高与来源组件高的参考口径尚未调和，主高度留空，原高程与复查前数值保留；75层有组件文档支持。\n'
     if (out/'row_revision_validation.json').exists():
         revision=json.loads((out/'row_revision_validation.json').read_text(encoding='utf-8'))
         report += f"本轮相对90300be候选版：主类改变{revision['changed_main_classes']:,}条，子类改变{revision['changed_subclasses']:,}条，明确绑定组件的用途文档事实{revision['function_facts_checked']}项。此为规则、来源及模型联合修订，不是独立实测纠错数量。\n"
+if (out/'revision_20261025_summary.json').exists():
+    current=json.loads((out/'revision_20261025_summary.json').read_text(encoding='utf-8'))
+    report += f"\n最终来源口径修订：相比紧邻的第9轮候选，主类改变{current['changed_main_class']:,}条、子类改变{current['changed_subclass']:,}条、任一改变{current['changed_either_class']:,}条。它们包含用途来源更新和真实重训的影响，不是高度纠错数量。详见revision_20261025_summary.json及comparisons_and_validation.zip内source_scope_repair_cases.csv。\n中银大厦主高度因303.3m组件高与315m结构高缺少共同基准而未知，65/70/72层分源保留。ICC保留490−29.4=460.6m结构组件高度，484m建筑高度另列；103/108/118层未调和，主层数及依赖面积未知，不能将相邻5层组件相加。KCC一号塔26/35层未调和，同样只保留可靠办公用途，主层数及依赖面积未知。所有原始来源数值、口径和撤值理由见source_reconciliation_evidence.zip。\n"
 (out/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 (destination/'FINAL_REVISION_REPORT_zh.txt').write_text(report,encoding='utf-8')
 description=f'''HK-BFETD: Hong Kong Building Function and Energy Typology Dataset — version 2.0

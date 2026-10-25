@@ -275,8 +275,10 @@ Run scripts in order under `src/`:
 
 Whole-stock native-agent factual review is incomplete. Program checks and model
 agreement with weak source labels are separate from independently verified facts.
-The native-agent ledger in `output/row_review_20261023/` records actual per-row
-coverage; pending rows are never counted as LLM reviewed. Step 4's default offline
+The current native-agent ledger in `output/native_review_progress/` records actual
+per-row coverage. Older ledger trees are preserved in the verified archives indexed
+by `output/history_20261025/ARCHIVE_INDEX.json`; pending rows are never counted as
+LLM reviewed. Step 4's default offline
 queue does not call an LLM. Its explicit external API mode is a different workflow.
 
 The current review scope uses automatic checks over all 341,153 records, followed
@@ -285,6 +287,16 @@ That fixed initial queue has been reviewed; source-scope repairs, rebuilding,
 retraining and a fresh independent final review remain separate acceptance gates.
 Unlinked village-house records are not individually searched. Missing and
 unverified values remain explicit unknowns rather than invented replacements.
+
+Source reconciliation also checks adoption coverage. Office building descriptions
+can supply reviewed function facts without donating their reported height, storey
+count or area. Bank of China Tower's component/owner height references remain
+unreconciled; ICC's 103/108/118, Millennia Plaza's 25/32 and KCC Tower 1's 26/35
+counts remain separate source reports. Their unresolved primary fields and
+dependent uniform-floorplate area proxies are withheld. Horizontally adjacent
+components are never reconciled by adding their storey counts. ICC remains
+Commercial with an unknown subclass because its office and hotel uses lack
+verified comparable area shares.
 
 Tenant points, addresses and linked access descriptions do not establish an
 entire component's dominant function. Matched function-bearing building polygons,
