@@ -16,6 +16,7 @@ from shapely.geometry import Polygon
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "src" / "assemble_v2_release_dataset.py"
+sys.path.insert(0, str(ROOT / "src"))
 
 EXPECTED_PUBLIC_FIELDS = (
     ("Building_ID_建筑ID", "BUILDINGSTRUCTUREID"),
@@ -40,7 +41,15 @@ EXPECTED_PUBLIC_FIELDS = (
     ("BDBIAR_Record_ID_屋宇署记录ID", "BDBIAR_OBJECTID"),
     ("BDBIAR_Classification_屋宇署分类", "BDBIAR_CLASS"),
     ("BDBIAR_Building_Age_Year_屋宇署楼龄年份", "BDBIAR_AGE"),
+    ("BDBIAR_Address_TC_屋宇署中文地址", "BDBIAR_ADDRESS_C"),
     ("Dist_to_BDBIAR_m_距屋宇署点位距离", "distance_to_bdbiar"),
+    ("BDBIAR_Match_Quality_屋宇署匹配质量", "BDBIAR_Match_Quality"),
+    ("BDBIAR_Source_Attributes_Usable_屋宇署属性可采用", "BDBIAR_Source_Attributes_Usable"),
+    ("BDBIAR_Source_Integrity_Status_屋宇署来源完整性", "BDBIAR_Source_Integrity_Status"),
+    ("BDBIAR_Candidate_Record_ID_屋宇署候选记录ID", "BDBIAR_OBJECTID_CANDIDATE"),
+    ("BDBIAR_Candidate_Classification_屋宇署候选分类", "BDBIAR_CLASS_CANDIDATE"),
+    ("BDBIAR_Candidate_Building_Age_Year_屋宇署候选楼龄年份", "BDBIAR_AGE_CANDIDATE"),
+    ("BDBIAR_Candidate_Address_TC_屋宇署候选中文地址", "BDBIAR_ADDRESS_C_CANDIDATE"),
     ("Crowdsourced_POIs_Matched_众包POI匹配详情", "Matched_POIs"),
     ("OSM_Record_ID_OSM记录ID", "osmid"),
     ("OSM_Building_Tag_OSM建筑标签", "building"),
@@ -93,7 +102,17 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
                     m.RAW_ID: building_id,
                     m.CSUID: f"component-{index}",
                     "Calibrated_Main_Class": (
-                        "Unchanged_custom_label" if index == 1 else "Non-assessed_非评估类别"
+                        "Commercial_商业类别" if index == 1 else "Non-assessed_非评估类别"
+                    ),
+                    "Calibrated_Sub_Class": (
+                        "Retail_零售"
+                        if index == 1
+                        else "Transport Infrastructure_交通基础设施"
+                    ),
+                    "Calibrated_Mix_Proportion": (
+                        "Retail_零售:1.00"
+                        if index == 1
+                        else "Transport Infrastructure_交通基础设施:1.00"
                     ),
                     "Calibrated_Notes": "" if index == 1 else "verified scope",
                     "ML_Confidence": 0.91 if index == 1 else "",
@@ -103,7 +122,16 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
                     "CATEGORY": index,
                     "GROSSFLOORAREA": 900 + index,
                     "BDBIAR_AGE": 2000 + index,
+                    "BDBIAR_Match_Quality": "inside_unique",
+                    "BDBIAR_Source_Attributes_Usable": True,
+                    "BDBIAR_Source_Integrity_Status": "",
+                    "BDBIAR_OBJECTID_CANDIDATE": "",
+                    "BDBIAR_CLASS_CANDIDATE": "",
+                    "BDBIAR_AGE_CANDIDATE": "",
+                    "BDBIAR_ADDRESS_C_CANDIDATE": "",
                     "distance_to_bdbiar": float(index),
+                    "Classification_Source": "Keyword",
+                    "LLM_Cache_Status": "",
                     "Structure_Use_Type": "" if index == 1 else "bridge_structure",
                     "Structure_Use_Name": "" if index == 1 else "Test Bridge",
                     "Structure_Use_Source": "" if index == 1 else "official",
@@ -159,6 +187,8 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
                 "HKBFETD_v2.geojson",
                 "HKBFETD_v2.parquet",
                 "assembly_manifest.json",
+                "classification_integrity_audit.csv",
+                "classification_integrity_manifest.json",
                 "schema.json",
             ],
         )
@@ -172,7 +202,7 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
         csv_frame = csv_frame.mask(csv_frame.eq(""), pd.NA)
         self.assertEqual(m.PUBLIC_FIELDS, EXPECTED_PUBLIC_FIELDS)
         public_names = [output for output, _ in m.PUBLIC_FIELDS]
-        self.assertEqual(parquet.columns[:30].tolist(), public_names)
+        self.assertEqual(parquet.columns[: len(public_names)].tolist(), public_names)
         self.assertEqual(parquet.crs.to_epsg(), 2326)
         self.assertEqual(parquet[m.ID].tolist(), ["001", "002"])
         self.assertEqual(parquet["Height_m_建筑高度"].tolist(), [31.5, 12.0])
@@ -182,8 +212,15 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
         )
         self.assertEqual(
             parquet["UBEM_Main_Class_主类别"].tolist(),
-            ["Unchanged_custom_label", "Non-assessed_非评估类别"],
+            ["Commercial_商业类别", "Non-assessed_非评估类别"],
         )
+        integrity = json.loads(
+            (self.output / "classification_integrity_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(integrity["changed_rows"], 0)
+        self.assertEqual(integrity["remaining_changed_rows_after_gate"], 0)
         self.assertNotIn("Stage5_Repair_Action", parquet.columns)
         self.assertNotIn("Stage7_Repair_Action", parquet.columns)
         self.assertNotIn("ML_Main_Class", parquet.columns)
@@ -301,6 +338,52 @@ class AssembleV2ReleaseDatasetTests(unittest.TestCase):
                 self.classification, self.physical, self.output
             )
         self.assertFalse(self.output.exists())
+
+    def test_rejects_adopted_attributes_from_unsafe_bdbiar_match(self):
+        classification = pd.read_csv(
+            self.classification,
+            dtype="string",
+            keep_default_na=False,
+            encoding="utf-8-sig",
+        )
+        classification.loc[0, "BDBIAR_Match_Quality"] = "nearby_only"
+        classification.loc[0, "BDBIAR_Source_Attributes_Usable"] = "False"
+        classification.to_csv(self.classification, index=False, encoding="utf-8-sig")
+        with self.assertRaisesRegex(ValueError, "Unsafe BDBIAR"):
+            self.module.assemble_release_dataset(
+                self.classification, self.physical, self.output
+            )
+        self.assertFalse(self.output.exists())
+
+    def test_fail_closes_dependent_classification_without_changing_main(self):
+        m = self.module
+        classification = pd.read_csv(
+            self.classification,
+            dtype="string",
+            keep_default_na=False,
+            encoding="utf-8-sig",
+        )
+        row = classification[m.RAW_ID].eq("001")
+        classification.loc[row, "Calibrated_Sub_Class"] = "Private Housing_私人房屋"
+        classification.loc[row, "Calibrated_Mix_Proportion"] = (
+            "Private Housing_私人房屋:1.00"
+        )
+        classification.to_csv(self.classification, index=False, encoding="utf-8-sig")
+
+        manifest = m.assemble_release_dataset(
+            self.classification, self.physical, self.output
+        )
+        result = pd.read_csv(
+            self.output / "HKBFETD_v2.csv",
+            dtype="string",
+            keep_default_na=False,
+            encoding="utf-8-sig",
+        )
+        published = result.loc[result[m.ID].eq("001")].iloc[0]
+        self.assertEqual(published["UBEM_Main_Class_主类别"], "Commercial_商业类别")
+        self.assertEqual(published["UBEM_Sub_Class_子类别"], "Unknown_未知类别")
+        self.assertEqual(published["UBEM_Mixed_Proportions_混合比例"], "")
+        self.assertEqual(manifest["classification_integrity"]["fail_closed_rows"], 1)
 
 
 if __name__ == "__main__":

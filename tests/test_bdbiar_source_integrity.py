@@ -48,7 +48,10 @@ class BdbiarSourceIntegrityTests(unittest.TestCase):
         self.assertTrue(result["BDBIAR_CLASS"].isna().all())
         self.assertEqual(result["BDBIAR_AGE_CANDIDATE"].tolist(), [1972, 1972])
         self.assertEqual(result["BDBIAR_CLASS_CANDIDATE"].tolist(), ["Residential", "Residential"])
-        self.assertEqual(result["BDBIAR_OBJECTID"].tolist(), [93144, 359836])
+        self.assertTrue(result["BDBIAR_OBJECTID"].isna().all())
+        self.assertEqual(
+            result["BDBIAR_OBJECTID_CANDIDATE"].tolist(), [93144, 359836]
+        )
         self.assertTrue(result["BDBIAR_Match_Quality"].eq("inside_unique").all())
         self.assertFalse(result["BDBIAR_Source_Attributes_Usable"].any())
 
@@ -86,6 +89,7 @@ class BdbiarSourceIntegrityTests(unittest.TestCase):
         frame = pd.DataFrame({
             "BDBIAR_Source_Block_ID": ["5145170"],
             "BDBIAR_OBJECTID": [93144],
+            "BDBIAR_ADDRESS_C": ["Candidate address"],
             "BDBIAR_AGE": [1972],
             "BDBIAR_CLASS": ["Residential"],
             "BDBIAR_Match_Quality": ["nearby_only"],
@@ -98,6 +102,10 @@ class BdbiarSourceIntegrityTests(unittest.TestCase):
         self.assertEqual(twice.loc[0, "BDBIAR_CLASS_CANDIDATE"], "Residential")
         self.assertTrue(pd.isna(twice.loc[0, "BDBIAR_AGE"]))
         self.assertTrue(pd.isna(twice.loc[0, "BDBIAR_CLASS"]))
+        self.assertTrue(pd.isna(twice.loc[0, "BDBIAR_OBJECTID"]))
+        self.assertEqual(twice.loc[0, "BDBIAR_OBJECTID_CANDIDATE"], 93144)
+        self.assertTrue(pd.isna(twice.loc[0, "BDBIAR_ADDRESS_C"]))
+        self.assertEqual(twice.loc[0, "BDBIAR_ADDRESS_C_CANDIDATE"], "Candidate address")
         self.assertTrue(twice.loc[0, "BDBIAR_Source_Integrity_Evidence"])
 
     def test_new_nonempty_fallback_updates_quarantined_candidate(self):

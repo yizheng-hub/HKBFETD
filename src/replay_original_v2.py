@@ -2,10 +2,10 @@
 
 The replay consumes a checksummed input manifest and runs this fixed sequence:
 
-1. original rule checkpoint plus the narrowly scoped GFA-evidence withdrawal;
-2. original LLM checkpoint, with physical prompt deltas kept as diagnostics;
-3. original frozen VLM inheritance/delete decisions, followed by verified
-   nonbuilding physical-scope exclusions;
+1. full original-rule rerun after corrected physical and BDBIAR scope inputs;
+2. original LLM checkpoints only when the complete prompt is unchanged;
+3. fail-closed VLM checkpoint handling, followed by verified nonbuilding
+   physical-scope exclusions;
 4. original nine-feature ML training and calibration;
 5. original Step 10 public classification standardization.
 
@@ -32,17 +32,16 @@ STAGES = {
         "script": PROJECT_ROOT / "src" / "replay_original_v2_stage3.py",
         "outputs": [
             "checkpoints/step3_rule_engine_classification.csv",
-            "checkpoints/stage3_gfa_withdrawal_comparison.csv",
-            "checkpoints/stage3_gfa_weak_fallbacks_withheld.csv",
+            "checkpoints/stage3_foundation_scope_comparison.csv",
             "checkpoints/stage3_build_manifest.json",
         ],
     },
     5: {
         "script": PROJECT_ROOT / "src" / "replay_original_v2_stage5.py",
         "outputs": [
-            "checkpoints/step4_combined_llm_evidence.csv",
+            "checkpoints/step4_exact_input_llm_evidence.csv",
             "checkpoints/step5_merged_classification.csv",
-            "checkpoints/stage4_physical_prompt_rechecks_not_applied.csv",
+            "checkpoints/stage4_invalidated_llm_cache.csv",
             "checkpoints/stage5_classification_changes.csv",
             "checkpoints/stage5_build_manifest.json",
         ],
@@ -52,6 +51,7 @@ STAGES = {
         "outputs": [
             "checkpoints/step7_corrected.csv",
             "checkpoints/stage7_classification_changes.csv",
+            "checkpoints/stage7_withheld_vlm_decisions.csv",
             "checkpoints/stage7_build_manifest.json",
         ],
     },
@@ -89,6 +89,7 @@ REQUIRED_INPUT_ROLES = {
     "legacy_stage4",
     "legacy_stage5",
     "verified_physical",
+    "bdbiar_scope",
     "nonbuilding_scope",
     "gfa_rule_delta",
     "llm_review_summary",
@@ -106,6 +107,7 @@ PINNED_INPUT_HASHES = {
     "legacy_stage3": "c8b36fa65e5cf07fca77ce4cddf4a46a1e7902fdb82b369bc8e960fa777ee010",
     "legacy_stage5": "4adbab285f0acd50f258a7b2c1a5fad01867bec35ea40050e6ec17f4d85b88fa",
     "verified_physical": "783e30db5240eb02cf6217e03707f98395a129d942968ff6115cc1b23b418c88",
+    "bdbiar_scope": "389fb63fc8c59ed638fdda5e1a443058af233734ee8bcba719ae61a9fba1886a",
     "nonbuilding_scope": "2c14d4adbc75edaf79a621f9b6228b37c0bf90b9554ac06b0cab771ea24f1e38",
     "stage6_suggestions": "09898410ac58f67f9932055ad0339cbda4078d5c5e301de02dcc4d9c5f947dba",
 }
@@ -116,6 +118,7 @@ ENV_BY_ROLE = {
     "legacy_stage4": "HKBFETD_REPLAY_LEGACY_STAGE4",
     "legacy_stage5": "HKBFETD_REPLAY_LEGACY_STAGE5",
     "verified_physical": "HKBFETD_REPLAY_VERIFIED_PHYSICAL",
+    "bdbiar_scope": "HKBFETD_REPLAY_BDBIAR_SCOPE",
     "nonbuilding_scope": "HKBFETD_REPLAY_NONBUILDING_SCOPE",
     "gfa_rule_delta": "HKBFETD_REPLAY_GFA_DELTA",
     "llm_review_summary": "HKBFETD_REPLAY_LLM_REVIEW_SUMMARY",
@@ -288,7 +291,7 @@ def run(args: argparse.Namespace) -> None:
     run_manifest = {
         "schema_version": 1,
         "dataset_version": "2.0-corrected",
-        "method": "frozen original rule -> LLM/VLM checkpoints -> nine-feature ML -> original Step 10",
+        "method": "full frozen original rule rerun -> exact-prompt LLM checkpoints -> fail-closed VLM checkpoints -> nine-feature ML -> original Step 10",
         "started_utc": datetime.now(timezone.utc).isoformat(),
         **check,
         "stages": {},

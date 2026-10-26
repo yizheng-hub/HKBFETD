@@ -30,6 +30,59 @@ def norm_id(value):
     return s[:-2] if s.endswith(".0") else s
 
 
+def protect_upstream_classifications(calibrated, ml):
+    """Keep rule/LLM/VLM decisions ahead of ML in the frozen method order."""
+    out = calibrated.copy()
+    main = out["Final_Main_Class"].fillna("").astype(str).str.strip()
+    sub = out["Final_Sub_Class"].fillna("").astype(str).str.strip()
+    source = out["Classification_Source"].fillna("").astype(str).str.strip()
+    mix = out.get("Sub_Class_Proportions", "")
+    if not hasattr(mix, "fillna"):
+        mix = main.map(lambda _: "")
+    mix = mix.fillna("").astype(str).str.strip()
+
+    unknown_main = main.str.lower().isin({"", "nan", "none", "null", "unknown"}) | main.str.contains(
+        "未知", regex=False
+    ) | main.str.contains("unknown", case=False, regex=False)
+    weak_source = source.str.lower().isin({"", "none", "unknown", "fallback_to_default", "fallback_to_area"})
+    protect_main = ~unknown_main & ~weak_source
+    known_sub = ~(sub.str.lower().isin({"", "nan", "none", "null", "unknown"}) |
+                  sub.str.contains("未知", regex=False) |
+                  sub.str.contains("unknown", case=False, regex=False))
+    known_mix = ~(mix.str.lower().isin({"", "nan", "none", "null", "unknown"}) |
+                  mix.str.contains("未知", regex=False) |
+                  mix.str.contains("unknown", case=False, regex=False))
+
+    canonical_main = main.map(ml.canonicalize_main_label)
+    canonical_sub = sub.map(ml.canonicalize_subclass_label)
+    out.loc[protect_main, "Calibrated_Main_Class"] = canonical_main[protect_main]
+    out.loc[protect_main & known_sub, "Calibrated_Sub_Class"] = canonical_sub[protect_main & known_sub]
+    if hasattr(ml, "normalize_proportion_string"):
+        canonical_mix = mix.map(lambda value: ml.normalize_proportion_string(value, ml.canonicalize_subclass_label))
+        out.loc[protect_main & known_mix, "Calibrated_Mix_Proportion"] = canonical_mix[protect_main & known_mix]
+
+    changed_by_frozen_ml = protect_main & out["Calibrated_Source"].fillna("").astype(str).str.contains(
+        "Machine_Learning|ML_", case=False, regex=True
+    )
+    out.loc[changed_by_frozen_ml, "Calibrated_Source"] = (
+        "Protected_Upstream_Main(" + source[changed_by_frozen_ml] + ")"
+    )
+    out.loc[changed_by_frozen_ml, "Calibrated_Notes"] = (
+        out.loc[changed_by_frozen_ml, "Calibrated_Notes"].fillna("").astype(str)
+        + "; 前序主类别受保护，机器学习仅可补充缺失成分"
+    )
+    if not out.loc[protect_main, "Calibrated_Main_Class"].equals(canonical_main[protect_main]):
+        raise AssertionError("ML changed an upstream-determined main class")
+    return out, {
+        "upstream_known_main_rows": int(protect_main.sum()),
+        "upstream_known_sub_rows": int((protect_main & known_sub).sum()),
+        "upstream_known_mix_rows": int((protect_main & known_mix).sum()),
+        "frozen_ml_main_overrides_rejected": int(changed_by_frozen_ml.sum()),
+        "ml_eligible_unknown_or_weak_main_rows": int((~protect_main).sum()),
+        "upstream_main_changed_after_gate": 0,
+    }
+
+
 def dry_run_check():
     import pandas as pd
     report = {
@@ -169,6 +222,7 @@ def run_training():
     keyword_tool = {"keywords_config": json.loads((FROZEN_CTL / "keywords.json").read_text(encoding="utf-8"))}
     subclass_props = ml.train_subclass_models(X_all, X_train, df, keyword_tool)
     calibrated = ml.apply_ml_calibration(df, proba, subclass_props, X_all)
+    calibrated, upstream_gate = protect_upstream_classifications(calibrated, ml)
     final = ml.generate_final_output(calibrated, gdf_base)
     proba.to_csv(OUT / "probabilities.csv", encoding="utf-8-sig")
     with (OUT / "models.pkl").open("wb") as f:
@@ -180,6 +234,7 @@ def run_training():
         "missing_verified_height_rows": height_source_missing,
         "internal_15m_feature_fill_rows": int(pd.to_numeric(X_all["Estimated_Height"], errors="coerce").eq(15.0).sum()),
         "public_height_nulls_preserved_in_step9": int(pd.to_numeric(final["Estimated_Height"], errors="coerce").isna().sum()),
+        "classification_order_gate": upstream_gate,
         "main_class_counts": final["Calibrated_Main_Class"].value_counts(dropna=False).to_dict(),
         "confidence_summary": proba.describe().to_dict(),
         "elapsed_seconds": time.time() - start,

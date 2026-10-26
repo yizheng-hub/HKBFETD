@@ -22,6 +22,8 @@ import pandas as pd
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping
 from shapely.geometry.polygon import orient
 
+import release_classification_integrity as classification_integrity
+
 
 ID = "Building_ID_建筑ID"
 RAW_ID = "BUILDINGSTRUCTUREID"
@@ -51,7 +53,15 @@ PUBLIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("BDBIAR_Record_ID_屋宇署记录ID", "BDBIAR_OBJECTID"),
     ("BDBIAR_Classification_屋宇署分类", "BDBIAR_CLASS"),
     ("BDBIAR_Building_Age_Year_屋宇署楼龄年份", "BDBIAR_AGE"),
+    ("BDBIAR_Address_TC_屋宇署中文地址", "BDBIAR_ADDRESS_C"),
     ("Dist_to_BDBIAR_m_距屋宇署点位距离", "distance_to_bdbiar"),
+    ("BDBIAR_Match_Quality_屋宇署匹配质量", "BDBIAR_Match_Quality"),
+    ("BDBIAR_Source_Attributes_Usable_屋宇署属性可采用", "BDBIAR_Source_Attributes_Usable"),
+    ("BDBIAR_Source_Integrity_Status_屋宇署来源完整性", "BDBIAR_Source_Integrity_Status"),
+    ("BDBIAR_Candidate_Record_ID_屋宇署候选记录ID", "BDBIAR_OBJECTID_CANDIDATE"),
+    ("BDBIAR_Candidate_Classification_屋宇署候选分类", "BDBIAR_CLASS_CANDIDATE"),
+    ("BDBIAR_Candidate_Building_Age_Year_屋宇署候选楼龄年份", "BDBIAR_AGE_CANDIDATE"),
+    ("BDBIAR_Candidate_Address_TC_屋宇署候选中文地址", "BDBIAR_ADDRESS_C_CANDIDATE"),
     ("Crowdsourced_POIs_Matched_众包POI匹配详情", "Matched_POIs"),
     ("OSM_Record_ID_OSM记录ID", "osmid"),
     ("OSM_Building_Tag_OSM建筑标签", "building"),
@@ -101,6 +111,12 @@ CLASSIFICATION_STRING_FIELDS = {
     "BUILDINGNAMETC",
     "BDBIAR_OBJECTID",
     "BDBIAR_CLASS",
+    "BDBIAR_ADDRESS_C",
+    "BDBIAR_Match_Quality",
+    "BDBIAR_Source_Integrity_Status",
+    "BDBIAR_OBJECTID_CANDIDATE",
+    "BDBIAR_CLASS_CANDIDATE",
+    "BDBIAR_ADDRESS_C_CANDIDATE",
     "Matched_POIs",
     "osmid",
     "building",
@@ -119,7 +135,20 @@ CLASSIFICATION_NUMERIC_FIELDS = {
     "CATEGORY",
     "GROSSFLOORAREA",
     "BDBIAR_AGE",
+    "BDBIAR_AGE_CANDIDATE",
     "distance_to_bdbiar",
+}
+
+RELEASE_GATE_FIELDS = {
+    "Classification_Source",
+    "LLM_Cache_Status",
+    "Stage7_Repair_Action",
+}
+
+BDBIAR_ADOPTED_ATTRIBUTES = {
+    "BDBIAR_CLASS",
+    "BDBIAR_AGE",
+    "BDBIAR_ADDRESS_C",
 }
 
 
@@ -170,6 +199,7 @@ def _read_classification(path: Path) -> pd.DataFrame:
         CSUID,
         *(source for _, source in PUBLIC_FIELDS if source not in PHYSICAL_CORE),
         *STRUCTURE_SCOPE_FIELDS,
+        *RELEASE_GATE_FIELDS,
     }
     header = pd.read_csv(path, nrows=0, encoding="utf-8-sig").columns
     missing = sorted(required - set(header))
@@ -188,8 +218,47 @@ def _read_classification(path: Path) -> pd.DataFrame:
         frame[column] = pd.to_numeric(frame[column], errors="raise")
     _require_string_key(frame, RAW_ID, "Classification CSV")
     _require_string_key(frame, CSUID, "Classification CSV")
+    _validate_classification_provenance(frame)
     frame.attrs["source_column_count"] = len(header)
     return frame
+
+
+def _validate_classification_provenance(frame: pd.DataFrame) -> None:
+    match_quality = frame["BDBIAR_Match_Quality"].astype("string")
+    usable = (
+        frame["BDBIAR_Source_Attributes_Usable"]
+        .astype("string")
+        .str.casefold()
+        .eq("true")
+        .fillna(False)
+    )
+    non_unique = match_quality.ne("inside_unique").fillna(True)
+    unsafe = non_unique | ~usable
+    if frame.loc[unsafe, sorted(BDBIAR_ADOPTED_ATTRIBUTES)].notna().any().any():
+        raise ValueError("Unsafe BDBIAR rows contain adopted source attributes")
+    if frame.loc[unsafe, "BDBIAR_OBJECTID"].notna().any():
+        raise ValueError("Unsafe BDBIAR matches contain an adopted record ID")
+
+    source = frame["Classification_Source"].fillna("").astype(str)
+    calibrated_source = frame["Calibrated_Source"].fillna("").astype(str)
+    for label, values in (
+        ("rule", source),
+        ("calibrated", calibrated_source),
+    ):
+        bdbiar = values.str.contains("BDBIAR", regex=False)
+        if (bdbiar & unsafe).any():
+            raise ValueError(f"{label} classification cites unsafe BDBIAR evidence")
+        if values.str.contains("GFA", case=False, regex=False).any():
+            raise ValueError(f"{label} classification cites unusable GFA evidence")
+        if values.str.contains("VLM", case=False, regex=False).any():
+            raise ValueError(f"{label} classification cites an unbound VLM decision")
+
+    llm = source.str.contains("LLM", case=False, regex=False)
+    exact_status = frame["LLM_Cache_Status"].fillna("").isin(
+        {"legacy_cache_exact_prompt", "native_cache_exact_prompt"}
+    )
+    if (llm & ~exact_status).any():
+        raise ValueError("Published LLM classification lacks an exact current prompt contract")
 
 
 def _read_physical(path: Path) -> gpd.GeoDataFrame:
@@ -233,8 +302,20 @@ def _align(classification: pd.DataFrame, physical: gpd.GeoDataFrame) -> pd.DataF
 
 def assemble_frame(
     classification_path: Path, physical_path: Path
-) -> tuple[gpd.GeoDataFrame, dict[str, str], dict[str, Any]]:
+) -> tuple[
+    gpd.GeoDataFrame,
+    dict[str, str],
+    dict[str, Any],
+    pd.DataFrame,
+    dict[str, Any],
+]:
     classification = _read_classification(classification_path)
+    classification, integrity_audit, integrity_summary = (
+        classification_integrity.enforce_integrity(classification)
+    )
+    _, _, recheck = classification_integrity.enforce_integrity(classification)
+    if recheck["changed_rows"]:
+        raise AssertionError("Classification integrity output is not idempotent")
     physical = _read_physical(physical_path)
     input_stats = {
         "classification_csv": {
@@ -303,7 +384,7 @@ def assemble_frame(
     for column in PHYSICAL_CORE:
         if not result[column].equals(physical[column]):
             raise AssertionError(f"Assembler changed authoritative physical field {column}")
-    return result, sources, input_stats
+    return result, sources, input_stats, integrity_audit, integrity_summary
 
 
 def _json_value(value: Any) -> Any:
@@ -437,7 +518,9 @@ def assemble_release_dataset(
 
     classification_hash = sha256(classification_path)
     physical_hash = sha256(physical_path)
-    frame, sources, input_stats = assemble_frame(classification_path, physical_path)
+    frame, sources, input_stats, integrity_audit, integrity_summary = assemble_frame(
+        classification_path, physical_path
+    )
     attributes = [column for column in frame.columns if column != frame.geometry.name]
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -449,6 +532,8 @@ def assemble_release_dataset(
         parquet_path = staging / "HKBFETD_v2.parquet"
         geojson_path = staging / "HKBFETD_v2.geojson"
         schema_path = staging / "schema.json"
+        integrity_audit_path = staging / "classification_integrity_audit.csv"
+        integrity_manifest_path = staging / "classification_integrity_manifest.json"
 
         frame[attributes].to_csv(
             csv_path,
@@ -461,6 +546,26 @@ def assemble_release_dataset(
         _write_geojson(frame, geojson_path)
         schema_path.write_text(
             json.dumps(_schema(frame, sources), ensure_ascii=False, indent=2, allow_nan=False)
+            + "\n",
+            encoding="utf-8",
+        )
+        integrity_audit.to_csv(
+            integrity_audit_path, index=False, encoding="utf-8-sig", na_rep=""
+        )
+        integrity_manifest = {
+            "status": "PASS",
+            "policy": (
+                "Preserve main classes; normalize exact frozen-taxonomy aliases; "
+                "fail closed only on dependent subclass/mixture contradictions."
+            ),
+            **integrity_summary,
+            "remaining_changed_rows_after_gate": 0,
+            "classification_input_sha256": classification_hash,
+            "taxonomy_sha256": sha256(classification_integrity.DEFAULT_TAXONOMY),
+            "audit_sha256": sha256(integrity_audit_path),
+        }
+        integrity_manifest_path.write_text(
+            json.dumps(integrity_manifest, ensure_ascii=False, indent=2, allow_nan=False)
             + "\n",
             encoding="utf-8",
         )
@@ -503,6 +608,7 @@ def assemble_release_dataset(
                 "authoritative_physical_core_fields": list(PHYSICAL_CORE),
                 "structure_scope_rows_retained": int(scope_mask.sum()),
             },
+            "classification_integrity": integrity_manifest,
             "table": {
                 **common_table_stats,
                 "columns_including_geometry": len(frame.columns),
@@ -536,6 +642,11 @@ def assemble_release_dataset(
                     **_file_record(schema_path),
                     "field_records": len(attributes),
                 },
+                integrity_audit_path.name: {
+                    **_file_record(integrity_audit_path),
+                    "rows": int(len(integrity_audit)),
+                },
+                integrity_manifest_path.name: _file_record(integrity_manifest_path),
             },
             "manifest_self_hash": "omitted because a file cannot contain its own stable hash",
         }

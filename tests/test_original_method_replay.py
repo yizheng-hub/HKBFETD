@@ -1,18 +1,14 @@
 import ast
-import copy
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
 import unittest
-from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = ROOT / "src" / "replay_original_v2.py"
 STAGE5_PATH = ROOT / "src" / "replay_original_v2_stage5.py"
-STAGE7_PATH = ROOT / "src" / "replay_original_v2_stage7.py"
 FROZEN = ROOT / "src" / "frozen_original_method"
 
 
@@ -21,15 +17,6 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    return module
-
-
-def load_stage(path, environment):
-    spec = importlib.util.spec_from_file_location(f"test_{path.stem}", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    with mock.patch.dict(os.environ, environment):
-        spec.loader.exec_module(module)
     return module
 
 
@@ -109,132 +96,28 @@ class OriginalMethodReplayTests(unittest.TestCase):
             runner.STAGES[10]["outputs"],
         )
 
-    def test_stage7_keeps_original_inheritance_field_scope(self):
+    def test_stage7_fails_closed_without_current_vlm_contract(self):
         source = (ROOT / "src" / "replay_original_v2_stage7.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        host_fields = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == "host_fields"
-                for target in node.targets
-            ):
-                host_fields = ast.literal_eval(node.value)
-                break
-        self.assertEqual(host_fields, ["Final_Main_Class", "Final_Sub_Class"])
+        self.assertIn("withheld_missing_current_pair_prompt_image_contract", source)
+        self.assertIn("stage7_withheld_vlm_decisions.csv", source)
         self.assertIn("verified_nonbuilding_structure_excluded_before_ML", source)
-        self.assertEqual(
-            source.count('result.at[building_id, "Main_Class_Proportions"]'),
-            1,
+        self.assertNotIn("prior_vlm_merge_still_supported_by_new_geometry", source)
+
+    def test_stage5_reuses_only_exact_prompt_hashes(self):
+        source = STAGE5_PATH.read_text(encoding="utf-8")
+        self.assertIn("Current_Prompt_SHA256", source)
+        self.assertIn("Old_Prompt_SHA256", source)
+        self.assertIn("legacy_cache_exact_prompt", source)
+        self.assertIn("legacy_cache_prompt_changed", source)
+        self.assertIn("An LLM classification lacks an exact current prompt contract", source)
+        self.assertIn(
+            'candidate_frame["Final_Main_Class"] = candidate_frame["Final_Main_Class"].map(',
+            source,
         )
-
-    def test_stage7_requires_structured_vlm_audit_approval_and_exact_scope(self):
-        dummy = str(ROOT)
-        stage7 = load_stage(
-            STAGE7_PATH,
-            {
-                "HKBFETD_REPLAY_OUTPUT_DIR": dummy,
-                "HKBFETD_REPLAY_VERIFIED_PHYSICAL": dummy,
-                "HKBFETD_REPLAY_NONBUILDING_SCOPE": dummy,
-                "HKBFETD_REPLAY_STAGE6_SUGGESTIONS": dummy,
-                "HKBFETD_REPLAY_VLM_AUDIT": dummy,
-            },
+        self.assertIn(
+            'candidate_frame["Final_Sub_Class"] = candidate_frame["Final_Sub_Class"].map(',
+            source,
         )
-        audit = {
-            "scope": {
-                "target_ids": list(stage7.EXPECTED_VLM_TARGET_IDS),
-                "special_pair": dict(stage7.EXPECTED_VLM_SPECIAL_PAIR),
-            },
-            "geometry_change_comparison": [
-                {
-                    "BUILDINGSTRUCTUREID": building_id,
-                    "old_present": True,
-                    "new_present": True,
-                    "old_geometry": {"valid": True},
-                    "new_geometry": {"valid": True},
-                }
-                for building_id in stage7.EXPECTED_VLM_TARGET_IDS
-            ],
-            "prior_vlm_decision": {
-                **stage7.EXPECTED_VLM_SPECIAL_PAIR,
-                "final_suggestion": "Consensus_merge",
-            },
-            "prior_vlm_merge_still_supported_by_new_geometry": True,
-        }
-        stage7.validate_vlm_audit(audit)
-
-        rejected = copy.deepcopy(audit)
-        rejected["prior_vlm_merge_still_supported_by_new_geometry"] = False
-        rejected["irrelevant_text"] = "valid reuse"
-        with self.assertRaisesRegex(AssertionError, "explicitly approve reuse"):
-            stage7.validate_vlm_audit(rejected)
-
-        wrong_scope = copy.deepcopy(audit)
-        wrong_scope["scope"]["target_ids"][0] = 999999
-        with self.assertRaisesRegex(AssertionError, "target IDs"):
-            stage7.validate_vlm_audit(wrong_scope)
-
-    def test_stage5_prompt_contract_rejects_tampered_review_hashes(self):
-        dummy = str(ROOT)
-        stage5 = load_stage(
-            STAGE5_PATH,
-            {
-                "HKBFETD_REPLAY_OUTPUT_DIR": dummy,
-                "HKBFETD_REPLAY_LLM_REVIEW_SUMMARY": dummy,
-                "HKBFETD_REPLAY_LLM_PROMPT_CONTRACT": dummy,
-                "HKBFETD_REPLAY_NATIVE_REVIEWS": dummy,
-                "HKBFETD_REPLAY_LEGACY_STAGE4": dummy,
-                "HKBFETD_REPLAY_LEGACY_STAGE5": dummy,
-            },
-        )
-        expected_status_by_id = {
-            str(value): (
-                "cache_prompt_changed" if value <= 427 else "new_candidate_without_cache"
-            )
-            for value in range(1, 507)
-        }
-        records = []
-        reviews = []
-        for building_id, status in expected_status_by_id.items():
-            digest = hashlib.sha256(f"prompt-{building_id}".encode()).hexdigest()
-            records.append({
-                "BUILDINGSTRUCTUREID": building_id,
-                "status": status,
-                "new_prompt_sha256": digest,
-            })
-            reviews.append({
-                "BUILDINGSTRUCTUREID": building_id,
-                "status": status,
-                "input_prompt_sha256": digest,
-                "new_prompt_sha256": digest,
-            })
-        contract = {
-            "schema_version": 1,
-            "record_count": 506,
-            "status_counts": {
-                "cache_prompt_changed": 427,
-                "new_candidate_without_cache": 79,
-            },
-            "records": records,
-        }
-        verified = stage5.validate_prompt_contract(
-            contract,
-            reviews,
-            expected_status_by_id,
-        )
-        self.assertEqual(len(verified), 506)
-
-        for field in ("input_prompt_sha256", "new_prompt_sha256"):
-            tampered = copy.deepcopy(reviews)
-            tampered[0][field] = "0" * 64
-            with self.subTest(field=field), self.assertRaisesRegex(
-                AssertionError,
-                "prompt SHA-256 differs",
-            ):
-                stage5.validate_prompt_contract(
-                    contract,
-                    tampered,
-                    expected_status_by_id,
-                )
 
     def test_stage9_resume_requires_every_reproducibility_artifact(self):
         expected = {
@@ -253,13 +136,38 @@ class OriginalMethodReplayTests(unittest.TestCase):
         }
         self.assertEqual(set(load_runner().STAGES[9]["outputs"]), expected)
 
-    def test_stage3_preserves_independent_non_gfa_decisions(self):
+    def test_stage9_ml_cannot_replace_an_upstream_known_main_class(self):
+        source = (ROOT / "src" / "replay_original_v2_stage89.py").read_text(encoding="utf-8")
+        self.assertIn("def protect_upstream_classifications", source)
+        self.assertIn("ML changed an upstream-determined main class", source)
+        self.assertIn("ml_eligible_unknown_or_weak_main_rows", source)
+        self.assertIn("前序主类别受保护，机器学习仅可补充缺失成分", source)
+
+    def test_stage3_fully_reruns_rules_on_safe_foundation_inputs(self):
         source = (ROOT / "src" / "replay_original_v2_stage3.py").read_text(encoding="utf-8")
-        self.assertIn("gfa_only = {'GFA', 'GFA_Mixed'}", source)
-        self.assertIn("independent_non_gfa_classification_preserved", source)
-        self.assertIn("without_gfa_evidence", source)
-        self.assertIn("stage3_gfa_weak_fallbacks_withheld.csv", source)
-        self.assertIn("Expected 117 GFA-withdrawal LandsD-only fallbacks", source)
+        self.assertIn("Run the frozen rule engine for all 341,153 buildings", source)
+        self.assertIn("reused_exact_unaffected_rule_inputs", source)
+        self.assertIn("legacy_checkpoint_preservation_contract", source)
+        self.assertIn("BDBIAR|GFA|LLM|Inherited|Podium|Pre-Screening|Fusion|VLM", source)
+        self.assertIn("rule_input_semantic_match", source)
+        self.assertIn("legacy_effective_height", source)
+        self.assertIn('legacy_rule["SHAPE_Area"]', source)
+        self.assertIn('legacy_rule["BDBIAR_ADDRESS_C"]', source)
+        self.assertIn("Unsafe BDBIAR values leaked into frozen-rule inputs", source)
+        self.assertIn("Unusable permit GFA leaked into frozen-rule inputs", source)
+        self.assertIn("stage3_foundation_scope_comparison.csv", source)
+
+    def test_replay_requires_scoped_bdbiar_input(self):
+        runner = load_runner()
+        self.assertIn("bdbiar_scope", runner.REQUIRED_INPUT_ROLES)
+        self.assertEqual(
+            runner.ENV_BY_ROLE["bdbiar_scope"],
+            "HKBFETD_REPLAY_BDBIAR_SCOPE",
+        )
+        self.assertIn(
+            "checkpoints/stage7_withheld_vlm_decisions.csv",
+            runner.STAGES[7]["outputs"],
+        )
 
     def test_input_schema_has_exact_roles(self):
         schema = json.loads(

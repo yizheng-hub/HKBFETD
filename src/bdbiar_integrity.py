@@ -33,6 +33,7 @@ def apply_bdbiar_integrity_guard(frame, registry):
     if "BDBIAR_Match_Quality" in frame:
         non_unique = frame["BDBIAR_Match_Quality"].ne("inside_unique")
         _quarantine_attributes(frame, non_unique)
+        _quarantine_match_identity(frame, non_unique)
         frame.loc[non_unique, "BDBIAR_Source_Attributes_Usable"] = False
         missing_status = non_unique & frame[STATUS].eq("")
         frame.loc[missing_status, STATUS] = "match_quality_not_inside_unique"
@@ -52,12 +53,16 @@ def apply_bdbiar_integrity_guard(frame, registry):
             suppress = suppress.strip().lower() == "true"
         if suppress:
             _quarantine_attributes(frame, mask)
+            _quarantine_match_identity(frame, mask)
             frame.loc[mask, "BDBIAR_Source_Attributes_Usable"] = False
     return frame
 
 
 def _quarantine_attributes(frame, mask):
     for source_column, candidate_column in (
+        ("BDBIAR_ADDRESS_C", "BDBIAR_ADDRESS_C_CANDIDATE"),
+        ("BDBIAR_NSEARCH3_C", "BDBIAR_NSEARCH3_C_CANDIDATE"),
+        ("BDBIAR_NSEARCH4_C", "BDBIAR_NSEARCH4_C_CANDIDATE"),
         ("BDBIAR_AGE", "BDBIAR_AGE_CANDIDATE"),
         ("BDBIAR_CLASS", "BDBIAR_CLASS_CANDIDATE"),
     ):
@@ -65,10 +70,26 @@ def _quarantine_attributes(frame, mask):
             continue
         if candidate_column not in frame:
             frame[candidate_column] = float('nan') if source_column == 'BDBIAR_AGE' else None
-        if source_column == 'BDBIAR_CLASS':
+        if source_column != 'BDBIAR_AGE':
             frame[source_column] = frame[source_column].astype(object)
         for index in frame.index[mask]:
             new_source = frame.at[index, source_column]
             if pd.notna(new_source):
                 frame.at[index, candidate_column] = new_source
         frame.loc[mask, source_column] = None
+
+
+def _quarantine_match_identity(frame, mask):
+    """A nearest/shared point is only a candidate, not this footprint's record."""
+    source_column = "BDBIAR_OBJECTID"
+    if source_column not in frame:
+        return
+    candidate_column = "BDBIAR_OBJECTID_CANDIDATE"
+    if candidate_column not in frame:
+        frame[candidate_column] = None
+    frame[source_column] = frame[source_column].astype(object)
+    for index in frame.index[mask]:
+        new_source = frame.at[index, source_column]
+        if pd.notna(new_source):
+            frame.at[index, candidate_column] = new_source
+    frame.loc[mask, source_column] = None
