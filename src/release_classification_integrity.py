@@ -41,6 +41,7 @@ MAIN_BY_TAXONOMY_KEY = {
 ALLOWED_MAIN_CLASSES = {
     *MAIN_BY_TAXONOMY_KEY.values(),
     "Mixed-use_混合用途",
+    "Unknown_未知类别",
 }
 BROAD_PARENT_LABELS = {
     "Residential_住宅类别",

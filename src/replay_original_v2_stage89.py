@@ -13,6 +13,7 @@ OUT = Path(os.environ["HKBFETD_REPLAY_ML_OUTPUT_DIR"]).resolve()
 PROBES = OUT / "dry_run_input_check.json"
 FEATURES = ["area", "perimeter", "compactness", "centroid_x", "centroid_y", "ozp_code",
             "neighbor_density_50m", "dominant_neighbor_class_100m", "Estimated_Height"]
+HEIGHT_SENSITIVITY_SCENARIOS_M = (3.0, 6.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0, 150.0)
 
 
 def sha256(path: Path) -> str:
@@ -80,6 +81,201 @@ def protect_upstream_classifications(calibrated, ml):
         "frozen_ml_main_overrides_rejected": int(changed_by_frozen_ml.sum()),
         "ml_eligible_unknown_or_weak_main_rows": int((~protect_main).sum()),
         "upstream_main_changed_after_gate": 0,
+    }
+
+
+def apply_missing_height_sensitivity_gate(calibrated, models, x_all, verified_height, ml):
+    """Withhold ML labels that depend on the legacy internal 15 m height fill."""
+    import numpy as np
+    import pandas as pd
+
+    out = calibrated.copy()
+    out_ids = out["BUILDINGSTRUCTUREID"].map(norm_id)
+    heights = pd.to_numeric(verified_height, errors="coerce").copy()
+    heights.index = heights.index.map(norm_id)
+    missing_height = heights.reindex(out_ids).isna().to_numpy()
+    source = out["Calibrated_Source"].fillna("").astype(str)
+    ml_path = source.isin({"Machine_Learning_Predicted", "ML_Low_Confidence_Discard"}).to_numpy()
+    target = missing_height & ml_path
+
+    audit_columns = [
+        "BUILDINGSTRUCTUREID",
+        "Candidate_Main_Class_at_15m",
+        "Candidate_Sub_Class_at_15m",
+        "Candidate_Mix_at_15m",
+        "Sensitivity_Status",
+        "Unique_Main_Classes",
+        *[f"Main_at_{height:g}m" for height in HEIGHT_SENSITIVITY_SCENARIOS_M],
+    ]
+    if not target.any():
+        return out, pd.DataFrame(columns=audit_columns), {
+            "scenario_heights_m": list(HEIGHT_SENSITIVITY_SCENARIOS_M),
+            "missing_height_ml_path_rows": 0,
+            "stable_main_rows": 0,
+            "withheld_unstable_main_rows": 0,
+            "subclass_and_mixture_withheld_rows": 0,
+        }
+
+    expected_models = ["住宅类别", "商业类别", "工业类别"]
+    if list(models) != expected_models:
+        raise AssertionError(f"Unexpected frozen ML model order: {list(models)}")
+    x_indexed = x_all.copy()
+    x_indexed.index = x_indexed.index.map(norm_id)
+    target_ids = out_ids[target]
+    x_target = x_indexed.reindex(target_ids).copy()
+    if x_target.isna().any().any():
+        raise AssertionError("Missing-height sensitivity matrix contains unexpected nulls")
+
+    scenario_labels = {}
+    frozen_scenario_labels = {}
+    for height in HEIGHT_SENSITIVITY_SCENARIOS_M:
+        scenario = x_target.copy()
+        scenario["Estimated_Height"] = height
+        probabilities = np.column_stack(
+            [models[name].predict_proba(scenario)[:, 1] for name in expected_models]
+        )
+        active = probabilities >= 0.5
+        codes = (active * np.array([1, 2, 4])).sum(axis=1)
+        frozen_code_to_main = {
+            0: "Non-assessed_非评估类别",
+            1: "Residential_住宅类别",
+            2: "Commercial_商业类别",
+            3: "Mixed-use_混合用途",
+            4: "Industrial_工业类别",
+            5: "Mixed-use_混合用途",
+            6: "Mixed-use_混合用途",
+            7: "Mixed-use_混合用途",
+        }
+        sensitivity_code_to_main = {**frozen_code_to_main, 0: "Unknown_未知类别"}
+        scenario_labels[height] = pd.Series(
+            [sensitivity_code_to_main[int(code)] for code in codes], index=target_ids.index
+        )
+        frozen_scenario_labels[height] = pd.Series(
+            [frozen_code_to_main[int(code)] for code in codes], index=target_ids.index
+        )
+
+    label_frame = pd.DataFrame(scenario_labels)
+    candidate_main = out.loc[out.index[target], "Calibrated_Main_Class"].map(
+        ml.canonicalize_main_label
+    )
+    if not candidate_main.reset_index(drop=True).equals(
+        frozen_scenario_labels[15.0].reset_index(drop=True)
+    ):
+        raise AssertionError("15 m sensitivity baseline does not reproduce frozen ML main classes")
+    unique_count = label_frame.nunique(axis=1)
+    stable = unique_count.eq(1)
+    unstable = ~stable
+    target_positions = out.index[target]
+    stable_positions = target_positions[stable.to_numpy()]
+    unstable_positions = target_positions[unstable.to_numpy()]
+
+    out["ML_Height_Sensitivity_Status"] = ""
+    out["ML_Height_Sensitivity_Candidate_Main"] = ""
+    out.loc[target_positions, "ML_Height_Sensitivity_Candidate_Main"] = out.loc[
+        target_positions, "Calibrated_Main_Class"
+    ].to_numpy()
+    out.loc[stable_positions, "ML_Height_Sensitivity_Status"] = "stable_main_3_to_150m"
+    out.loc[unstable_positions, "ML_Height_Sensitivity_Status"] = "withheld_unstable_main_3_to_150m"
+
+    unknown_main = ml.canonicalize_main_label("未知类别")
+    unknown_sub = ml.canonicalize_subclass_label("未知类别")
+    out.loc[unstable_positions, "Calibrated_Main_Class"] = unknown_main
+    out.loc[unstable_positions, "Calibrated_Sub_Class"] = unknown_sub
+    out.loc[unstable_positions, "Calibrated_Mix_Proportion"] = ""
+    out.loc[unstable_positions, "Calibrated_Source"] = "ML_Withheld_Missing_Height_Sensitive"
+    out.loc[unstable_positions, "Calibrated_Notes"] = (
+        "ML candidate withheld: main class changes across 3-150 m height scenarios_"
+        "机器学习候选因主类别随3至150米高度情景变化而撤回"
+    )
+
+    # The main class is robust for these rows, but height-sensitive subclass
+    # regressions and mixture proportions are not published without a height.
+    out.loc[stable_positions, "Calibrated_Main_Class"] = label_frame.loc[
+        stable, HEIGHT_SENSITIVITY_SCENARIOS_M[0]
+    ].to_numpy()
+    out.loc[stable_positions, "Calibrated_Sub_Class"] = unknown_sub
+    out.loc[stable_positions, "Calibrated_Mix_Proportion"] = ""
+    out.loc[stable_positions, "Calibrated_Source"] = "ML_Height_Robust_Main_Only"
+    out.loc[stable_positions, "Calibrated_Notes"] = (
+        "ML main class stable across 3-150 m; subclass and mixture withheld_"
+        "机器学习主类别在3至150米情景下稳定，子类别和混合比例因高度缺失而撤回"
+    )
+    stable_unknown = stable_positions[
+        out.loc[stable_positions, "Calibrated_Main_Class"].eq(unknown_main).to_numpy()
+    ]
+    out.loc[stable_unknown, "Calibrated_Source"] = "ML_Withheld_Missing_Height_No_Active_Class"
+    out.loc[stable_unknown, "Calibrated_Notes"] = (
+        "No active ML class across 3-150 m height scenarios_"
+        "在3至150米高度情景下均无达到阈值的机器学习主类别"
+    )
+
+    audit = pd.DataFrame({
+        "BUILDINGSTRUCTUREID": target_ids.to_numpy(),
+        "Candidate_Main_Class_at_15m": calibrated.loc[target_positions, "Calibrated_Main_Class"].to_numpy(),
+        "Candidate_Sub_Class_at_15m": calibrated.loc[target_positions, "Calibrated_Sub_Class"].to_numpy(),
+        "Candidate_Mix_at_15m": calibrated.loc[target_positions, "Calibrated_Mix_Proportion"].to_numpy(),
+        "Sensitivity_Status": np.where(stable, "stable_main_3_to_150m", "withheld_unstable_main_3_to_150m"),
+        "Unique_Main_Classes": unique_count.to_numpy(),
+    })
+    for height in HEIGHT_SENSITIVITY_SCENARIOS_M:
+        audit[f"Main_at_{height:g}m"] = label_frame[height].to_numpy()
+
+    summary = {
+        "scenario_heights_m": list(HEIGHT_SENSITIVITY_SCENARIOS_M),
+        "missing_height_ml_path_rows": int(target.sum()),
+        "stable_main_rows": int(stable.sum()),
+        "stable_known_main_rows": int((stable & label_frame.iloc[:, 0].ne(unknown_main)).sum()),
+        "stable_unknown_main_rows": int((stable & label_frame.iloc[:, 0].eq(unknown_main)).sum()),
+        "withheld_unstable_main_rows": int(unstable.sum()),
+        "subclass_and_mixture_withheld_rows": int(target.sum()),
+    }
+    return out, audit[audit_columns], summary
+
+
+def apply_missing_floor_mixture_gate(calibrated, verified_floors, ml):
+    """Withhold floor-derived frozen-rule mixtures when no floor count is verified."""
+    import pandas as pd
+
+    out = calibrated.copy()
+    out_ids = out["BUILDINGSTRUCTUREID"].map(norm_id)
+    floors = pd.to_numeric(verified_floors, errors="coerce").copy()
+    floors.index = floors.index.map(norm_id)
+    missing_floor = floors.reindex(out_ids).isna().to_numpy()
+    source = out["Calibrated_Source"].fillna("").astype(str)
+    affected = missing_floor & source.eq("Rule_Engine(Fusion_Inferred_Mixed)").to_numpy()
+    positions = out.index[affected]
+    audit = out.loc[
+        positions,
+        [
+            "BUILDINGSTRUCTUREID",
+            "Calibrated_Main_Class",
+            "Calibrated_Sub_Class",
+            "Calibrated_Mix_Proportion",
+            "Calibrated_Source",
+        ],
+    ].copy()
+    audit = audit.rename(
+        columns={
+            "Calibrated_Sub_Class": "Candidate_Sub_Class",
+            "Calibrated_Mix_Proportion": "Candidate_Mix_Proportion",
+        }
+    )
+    out["Floor_Missing_Classification_Gate"] = ""
+    if len(positions):
+        out.loc[positions, "Calibrated_Sub_Class"] = ml.canonicalize_subclass_label("未知类别")
+        out.loc[positions, "Calibrated_Mix_Proportion"] = ""
+        out.loc[positions, "Floor_Missing_Classification_Gate"] = (
+            "mixed_main_retained_subclass_and_mixture_withheld"
+        )
+        out.loc[positions, "Calibrated_Notes"] = (
+            out.loc[positions, "Calibrated_Notes"].fillna("").astype(str)
+            + "; mixed main retained; floor-derived subclass and mixture withheld_"
+              "保留混合用途主类别，因层数缺失撤回楼层派生的子类别和比例"
+        )
+    return out, audit, {
+        "missing_floor_rule_mixed_rows": int(affected.sum()),
+        "main_class_changed_rows": 0,
+        "subclass_and_mixture_withheld_rows": int(affected.sum()),
     }
 
 
@@ -223,6 +419,38 @@ def run_training():
     subclass_props = ml.train_subclass_models(X_all, X_train, df, keyword_tool)
     calibrated = ml.apply_ml_calibration(df, proba, subclass_props, X_all)
     calibrated, upstream_gate = protect_upstream_classifications(calibrated, ml)
+    calibrated, height_sensitivity_audit, height_sensitivity_gate = (
+        apply_missing_height_sensitivity_gate(
+            calibrated,
+            models,
+            X_all,
+            phys_idx["Height_m_建筑高度"],
+            ml,
+        )
+    )
+    calibrated, floor_mixture_audit, floor_mixture_gate = apply_missing_floor_mixture_gate(
+        calibrated,
+        phys_idx["Floors_Count_地上层数"],
+        ml,
+    )
+    height_sensitivity_audit.to_csv(
+        OUT / "height_missing_ml_sensitivity_audit.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    (OUT / "height_missing_ml_sensitivity_summary.json").write_text(
+        json.dumps(height_sensitivity_gate, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    floor_mixture_audit.to_csv(
+        OUT / "floor_missing_rule_mixture_audit.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    (OUT / "floor_missing_rule_mixture_summary.json").write_text(
+        json.dumps(floor_mixture_gate, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     final = ml.generate_final_output(calibrated, gdf_base)
     proba.to_csv(OUT / "probabilities.csv", encoding="utf-8-sig")
     with (OUT / "models.pkl").open("wb") as f:
@@ -235,6 +463,8 @@ def run_training():
         "internal_15m_feature_fill_rows": int(pd.to_numeric(X_all["Estimated_Height"], errors="coerce").eq(15.0).sum()),
         "public_height_nulls_preserved_in_step9": int(pd.to_numeric(final["Estimated_Height"], errors="coerce").isna().sum()),
         "classification_order_gate": upstream_gate,
+        "missing_height_sensitivity_gate": height_sensitivity_gate,
+        "missing_floor_mixture_gate": floor_mixture_gate,
         "main_class_counts": final["Calibrated_Main_Class"].value_counts(dropna=False).to_dict(),
         "confidence_summary": proba.describe().to_dict(),
         "elapsed_seconds": time.time() - start,

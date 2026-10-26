@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 import pandas as pd
@@ -156,6 +157,26 @@ class BuildV2ReleaseTests(unittest.TestCase):
         result = self.module.build_release(out, self._inputs(), dry_run=True)
         self.assertEqual(result["status"], "dry_run_passed")
         self.assertFalse(out.exists())
+
+    def test_transient_windows_directory_lock_is_retried(self):
+        out = self.root / "retry-release"
+        real_replace = Path.replace
+        attempts = []
+
+        def replace_once_locked(path, target):
+            if Path(target) == out and not attempts:
+                attempts.append(path)
+                raise PermissionError("transient directory lock")
+            return real_replace(path, target)
+
+        with mock.patch.object(Path, "replace", replace_once_locked), mock.patch.object(
+            self.module.time, "sleep"
+        ) as sleep:
+            result = self.module.build_release(out, self._inputs())
+
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(out.is_dir())
+        sleep.assert_called_once_with(1)
 
     @unittest.skipIf(gpd is None, "GeoPandas is unavailable in this Python environment")
     def test_geoparquet_geometry_and_crs_are_preserved(self):

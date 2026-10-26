@@ -8,6 +8,7 @@ import math
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -582,7 +583,14 @@ def build_release(
         archive_digest_path.write_text(
             f"{sha256(archive_path)}  {archive_name}\n", encoding="utf-8"
         )
-        staging.replace(out)
+        for attempt in range(6):
+            try:
+                staging.replace(out)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(2**attempt)
     plan["outputs"] = sorted(
         path.relative_to(out).as_posix() for path in out.rglob("*") if path.is_file()
     )

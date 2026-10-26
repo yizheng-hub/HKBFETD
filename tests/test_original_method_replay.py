@@ -125,6 +125,10 @@ class OriginalMethodReplayTests(unittest.TestCase):
             "ml/features_X_all.pkl",
             "ml/features_X_train_ml.pkl",
             "ml/features_y_multilabel.pkl",
+            "ml/floor_missing_rule_mixture_audit.csv",
+            "ml/floor_missing_rule_mixture_summary.json",
+            "ml/height_missing_ml_sensitivity_audit.csv",
+            "ml/height_missing_ml_sensitivity_summary.json",
             "ml/models.pkl",
             "ml/probabilities.csv",
             "ml/step8_feature_base_calibrated.geojson",
@@ -142,6 +146,11 @@ class OriginalMethodReplayTests(unittest.TestCase):
         self.assertIn("ML changed an upstream-determined main class", source)
         self.assertIn("ml_eligible_unknown_or_weak_main_rows", source)
         self.assertIn("前序主类别受保护，机器学习仅可补充缺失成分", source)
+        self.assertIn("def apply_missing_height_sensitivity_gate", source)
+        self.assertIn("ML_Withheld_Missing_Height_Sensitive", source)
+        self.assertIn("ML_Height_Robust_Main_Only", source)
+        self.assertIn("def apply_missing_floor_mixture_gate", source)
+        self.assertIn("mixed_main_retained_subclass_and_mixture_withheld", source)
 
     def test_stage3_fully_reruns_rules_on_safe_foundation_inputs(self):
         source = (ROOT / "src" / "replay_original_v2_stage3.py").read_text(encoding="utf-8")

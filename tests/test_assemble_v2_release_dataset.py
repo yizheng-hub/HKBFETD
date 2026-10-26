@@ -32,6 +32,11 @@ EXPECTED_PUBLIC_FIELDS = (
     ("ML_Prob_Residential_住宅概率", "proba_住宅类别"),
     ("ML_Prob_Commercial_商业概率", "proba_商业类别"),
     ("ML_Prob_Industrial_工业概率", "proba_工业类别"),
+    ("ML_Height_Sensitivity_Status_高度缺失敏感性状态", "ML_Height_Sensitivity_Status"),
+    (
+        "Floor_Missing_Classification_Gate_层数缺失分类门",
+        "Floor_Missing_Classification_Gate",
+    ),
     ("LandsD_Structure_Type_地政署建筑类型", "BUILDINGSTRUCTURETYPE"),
     ("LandsD_Category_地政署分类", "CATEGORY"),
     ("LandsD_Status_地政署状态", "STATUS"),

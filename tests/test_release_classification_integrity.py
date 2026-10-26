@@ -128,6 +128,21 @@ class ReleaseClassificationIntegrityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported main-class"):
             gate.enforce_integrity(source)
 
+    def test_explicit_unknown_main_class_is_preserved(self) -> None:
+        source = pd.DataFrame(
+            {
+                "BUILDINGSTRUCTUREID": ["one"],
+                "Calibrated_Main_Class": ["Unknown_未知类别"],
+                "Calibrated_Sub_Class": ["Unknown_未知类别"],
+                "Calibrated_Mix_Proportion": [pd.NA],
+            }
+        )
+        result, _, summary = gate.enforce_integrity(source)
+        self.assertEqual(result.loc[0, "Calibrated_Main_Class"], "Unknown_未知类别")
+        self.assertEqual(result.loc[0, "Calibrated_Sub_Class"], gate.UNKNOWN_SUBCLASS)
+        self.assertTrue(pd.isna(result.loc[0, "Calibrated_Mix_Proportion"]))
+        self.assertEqual(summary["main_classes_changed"], 0)
+
     def test_cli_uses_requested_output_and_audit_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

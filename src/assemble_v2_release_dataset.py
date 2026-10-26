@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import tempfile
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,11 @@ PUBLIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("ML_Prob_Residential_住宅概率", "proba_住宅类别"),
     ("ML_Prob_Commercial_商业概率", "proba_商业类别"),
     ("ML_Prob_Industrial_工业概率", "proba_工业类别"),
+    ("ML_Height_Sensitivity_Status_高度缺失敏感性状态", "ML_Height_Sensitivity_Status"),
+    (
+        "Floor_Missing_Classification_Gate_层数缺失分类门",
+        "Floor_Missing_Classification_Gate",
+    ),
     ("LandsD_Structure_Type_地政署建筑类型", "BUILDINGSTRUCTURETYPE"),
     ("LandsD_Category_地政署分类", "CATEGORY"),
     ("LandsD_Status_地政署状态", "STATUS"),
@@ -105,6 +111,8 @@ CLASSIFICATION_STRING_FIELDS = {
     "Calibrated_Mix_Proportion",
     "Calibrated_Source",
     "Calibrated_Notes",
+    "ML_Height_Sensitivity_Status",
+    "Floor_Missing_Classification_Gate",
     "BUILDINGSTRUCTURETYPE",
     "STATUS",
     "BUILDINGNAMEEN",
@@ -655,7 +663,16 @@ def assemble_release_dataset(
             json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
             encoding="utf-8",
         )
-        staging.replace(output_dir)
+        for attempt in range(6):
+            try:
+                staging.replace(output_dir)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                # Windows indexing or antivirus may briefly retain a handle to
+                # the newly written GeoJSON/Parquet files.
+                time.sleep(2**attempt)
     return manifest
 
 
