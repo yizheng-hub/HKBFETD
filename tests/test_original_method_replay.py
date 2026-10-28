@@ -2,8 +2,13 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
+
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +22,22 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    return module
+
+
+def load_stage89(directory):
+    path = ROOT / "src" / "replay_original_v2_stage89.py"
+    environment = {
+        "HKBFETD_REPLAY_FROZEN_METHOD": directory,
+        "HKBFETD_REPLAY_OUTPUT_DIR": directory,
+        "HKBFETD_REPLAY_VERIFIED_PHYSICAL": str(Path(directory) / "physical.parquet"),
+        "HKBFETD_REPLAY_ML_OUTPUT_DIR": directory,
+    }
+    with mock.patch.dict(os.environ, environment):
+        spec = importlib.util.spec_from_file_location("hkbfetd_replay_stage89_test", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
     return module
 
 
@@ -129,6 +150,8 @@ class OriginalMethodReplayTests(unittest.TestCase):
             "ml/floor_missing_rule_mixture_summary.json",
             "ml/height_missing_ml_sensitivity_audit.csv",
             "ml/height_missing_ml_sensitivity_summary.json",
+            "ml/low_confidence_ml_withholding_audit.csv",
+            "ml/low_confidence_ml_withholding_summary.json",
             "ml/models.pkl",
             "ml/probabilities.csv",
             "ml/step8_feature_base_calibrated.geojson",
@@ -151,6 +174,45 @@ class OriginalMethodReplayTests(unittest.TestCase):
         self.assertIn("ML_Height_Robust_Main_Only", source)
         self.assertIn("def apply_missing_floor_mixture_gate", source)
         self.assertIn("mixed_main_retained_subclass_and_mixture_withheld", source)
+        self.assertIn("def apply_low_confidence_gate", source)
+        self.assertIn("ML_Withheld_Low_Confidence", source)
+
+    def test_low_confidence_ml_is_unknown_without_touching_rule_results(self):
+        class Taxonomy:
+            @staticmethod
+            def canonicalize_main_label(value):
+                return "Unknown_未知类别" if "未知" in value else value
+
+            @staticmethod
+            def canonicalize_subclass_label(value):
+                return "Unknown_未知类别" if "未知" in value else value
+
+        with tempfile.TemporaryDirectory() as directory:
+            stage89 = load_stage89(directory)
+        source = pd.DataFrame(
+            {
+                "BUILDINGSTRUCTUREID": ["low", "rule"],
+                "Calibrated_Main_Class": ["Non-assessed_非评估类别", "Commercial_商业类别"],
+                "Calibrated_Sub_Class": ["置信度过低归为非评估", "Office_办公"],
+                "Calibrated_Mix_Proportion": ["置信度过低归为非评估:1.00", "Office_办公:1.00"],
+                "Calibrated_Source": ["ML_Low_Confidence_Discard", "Rule_Engine(Keyword)"],
+                "Calibrated_Notes": ["low", "rule"],
+                "ML_Confidence": [0.49, 0.10],
+            }
+        )
+        result, audit, summary = stage89.apply_low_confidence_gate(source, Taxonomy())
+        self.assertEqual(result.loc[0, "Calibrated_Main_Class"], "Unknown_未知类别")
+        self.assertEqual(result.loc[0, "Calibrated_Source"], "ML_Withheld_Low_Confidence")
+        self.assertEqual(result.loc[1, "Calibrated_Main_Class"], "Commercial_商业类别")
+        self.assertEqual(result.loc[1, "Calibrated_Source"], "Rule_Engine(Keyword)")
+        self.assertEqual(audit["BUILDINGSTRUCTUREID"].tolist(), ["low"])
+        self.assertEqual(summary["published_as_unknown_rows"], 1)
+        self.assertEqual(summary["published_as_non_assessed_rows"], 0)
+
+        invalid = source.iloc[[0]].copy()
+        invalid.loc[:, "ML_Confidence"] = 0.5
+        with self.assertRaisesRegex(AssertionError, "finite confidence below 0.5"):
+            stage89.apply_low_confidence_gate(invalid, Taxonomy())
 
     def test_stage3_fully_reruns_rules_on_safe_foundation_inputs(self):
         source = (ROOT / "src" / "replay_original_v2_stage3.py").read_text(encoding="utf-8")

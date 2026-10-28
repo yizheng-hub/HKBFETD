@@ -279,6 +279,59 @@ def apply_missing_floor_mixture_gate(calibrated, verified_floors, ml):
     }
 
 
+def apply_low_confidence_gate(calibrated, ml):
+    """Publish rejected ML outputs as unknown rather than as non-assessed facts."""
+    import pandas as pd
+
+    out = calibrated.copy()
+    source = out["Calibrated_Source"].fillna("").astype(str)
+    confidence = pd.to_numeric(out["ML_Confidence"], errors="coerce")
+    affected = source.eq("ML_Low_Confidence_Discard")
+    if (affected & ~confidence.lt(0.5)).any():
+        raise AssertionError("ML_Low_Confidence_Discard requires a finite confidence below 0.5")
+
+    positions = out.index[affected]
+    audit = out.loc[
+        positions,
+        [
+            "BUILDINGSTRUCTUREID",
+            "Calibrated_Main_Class",
+            "Calibrated_Sub_Class",
+            "Calibrated_Mix_Proportion",
+            "Calibrated_Source",
+            "ML_Confidence",
+        ],
+    ].copy()
+    audit = audit.rename(
+        columns={
+            "Calibrated_Main_Class": "Candidate_Main_Class",
+            "Calibrated_Sub_Class": "Candidate_Sub_Class",
+            "Calibrated_Mix_Proportion": "Candidate_Mix_Proportion",
+            "Calibrated_Source": "Candidate_Source",
+        }
+    )
+    unknown_main = ml.canonicalize_main_label("未知类别")
+    unknown_sub = ml.canonicalize_subclass_label("未知类别")
+    out.loc[positions, "Calibrated_Main_Class"] = unknown_main
+    out.loc[positions, "Calibrated_Sub_Class"] = unknown_sub
+    out.loc[positions, "Calibrated_Mix_Proportion"] = ""
+    out.loc[positions, "Calibrated_Source"] = "ML_Withheld_Low_Confidence"
+    out.loc[positions, "Calibrated_Notes"] = (
+        "ML output withheld because no main-class probability reached 0.5_"
+        "机器学习主类别概率均未达到0.5，结果撤回并标记为未知"
+    )
+    audit["Published_Main_Class"] = unknown_main
+    audit["Published_Sub_Class"] = unknown_sub
+    audit["Published_Mix_Proportion"] = ""
+    audit["Published_Source"] = "ML_Withheld_Low_Confidence"
+    return out, audit, {
+        "low_confidence_candidates_withheld": int(affected.sum()),
+        "threshold": 0.5,
+        "published_as_unknown_rows": int(affected.sum()),
+        "published_as_non_assessed_rows": 0,
+    }
+
+
 def dry_run_check():
     import pandas as pd
     report = {
@@ -428,6 +481,10 @@ def run_training():
             ml,
         )
     )
+    calibrated, low_confidence_audit, low_confidence_gate = apply_low_confidence_gate(
+        calibrated,
+        ml,
+    )
     calibrated, floor_mixture_audit, floor_mixture_gate = apply_missing_floor_mixture_gate(
         calibrated,
         phys_idx["Floors_Count_地上层数"],
@@ -440,6 +497,15 @@ def run_training():
     )
     (OUT / "height_missing_ml_sensitivity_summary.json").write_text(
         json.dumps(height_sensitivity_gate, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    low_confidence_audit.to_csv(
+        OUT / "low_confidence_ml_withholding_audit.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    (OUT / "low_confidence_ml_withholding_summary.json").write_text(
+        json.dumps(low_confidence_gate, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     floor_mixture_audit.to_csv(
@@ -464,6 +530,7 @@ def run_training():
         "public_height_nulls_preserved_in_step9": int(pd.to_numeric(final["Estimated_Height"], errors="coerce").isna().sum()),
         "classification_order_gate": upstream_gate,
         "missing_height_sensitivity_gate": height_sensitivity_gate,
+        "low_confidence_gate": low_confidence_gate,
         "missing_floor_mixture_gate": floor_mixture_gate,
         "main_class_counts": final["Calibrated_Main_Class"].value_counts(dropna=False).to_dict(),
         "confidence_summary": proba.describe().to_dict(),

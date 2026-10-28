@@ -67,6 +67,8 @@ STAGES = {
             "ml/floor_missing_rule_mixture_summary.json",
             "ml/height_missing_ml_sensitivity_audit.csv",
             "ml/height_missing_ml_sensitivity_summary.json",
+            "ml/low_confidence_ml_withholding_audit.csv",
+            "ml/low_confidence_ml_withholding_summary.json",
             "ml/models.pkl",
             "ml/probabilities.csv",
             "ml/step8_feature_base_calibrated.geojson",
